@@ -16,8 +16,8 @@ editor_options:
 
   A follower of Jesus Christ, also known as a Christian, believes in everything described in the Bible because of the idea that God himself inspired people to write this book so humanity would know how to have a relationship with him and make the most out of their lives. Throughout biblical history, God attempted multiple times and with different strategies to have relationships with humanity, but because of human nature, they rejected God in many ways. Still, one of its teachings is that God, the creator of the universe, has a perfect plan for every individual on Earth, not leaving room for odds or coincidence and that God created the church, a place for Christians to have community and help each other to keep their relationship with God. With that in mind, the figure below raises an interesting question: why would God create a data scientist at this stage of humanity? A stage where data drives many decisions in the world and a stage where the world population is bigger than ever before. A fellow Christian might conclude that God strategically placed him or her in this era with these skills so they would help God to bring more people to church so they can develop the so desired relationship with him. 
 
-```{r echo=FALSE, out.width='100%'}
-knitr::include_graphics('motivation.png')
+```{r Loading motivation echo=FALSE, out.width='100%'}
+knitr::include_graphics('resources/motivation.png')
 ```
 
 # Topic Description
@@ -43,17 +43,18 @@ from a church that uses the system as a case study.**
 This project will use a multi-site church as a case study. This church started using Rock RMS in 2018, and it currently has 43 campuses distributed across the United States, with an average (mean) attendance count in 2022 of 67,320 per week across all the campuses and its online platform. This number is collected by manually counting the number of people on every campus, but this information is not on Rock. An attender can record attendance on Rock RMS by checking in in the app, checking in as a volunteer, or leaving their children in the kid's ministry. The average (mean) attendance recorded on Rock is 36,069 per week in the same period. Because this project aims to build a framework for other churches to use, only recorded attendance on Rock will be used. Still, it is important to mention the discrepancy because it reinforces the need of inviting people to use Rock RMS as much as possible. The discrepancy also reveals the attender anonymity that might be a challenge to overcome or accept throughout the analysis. 
 
 
-```{r include=FALSE}
+```{r Loading libraries include=FALSE}
 library(ggplot2)
 library(dplyr)
 library(lubridate)
+library(purrr)
 ```
 
 ```{r Importing data, include=FALSE}
-accountsDataset <- read.csv("AccountStats4.csv", header = TRUE)
-personDataset <- read.csv("Experiment4.csv", header = TRUE)
-accountsUnpivotDataset <- read.csv("AccountStatsUnpivot.csv", header = TRUE)
-retentionDataset <- read.csv("Retention.csv", header = TRUE)
+accountsDataset <- read.csv("datasets/AccountStats4.csv", header = TRUE)
+personDataset <- read.csv("datasets/Experiment4.csv", header = TRUE)
+accountsUnpivotDataset <- read.csv("datasets/AccountStatsUnpivot.csv", header = TRUE)
+retentionDataset <- read.csv("datasets/Retention.csv", header = TRUE)
 ```
 
 ### Dataset
@@ -101,6 +102,10 @@ personDataset$ServingGroups <- as.integer(personDataset$ServingGroups)
 
 ```
 
+```{r head datasets after transformations}
+summary(personDataset)
+```
+
 Throughout the years, this church created over 1.7 million Rock accounts, but only 947,577 currently have some attendance recorded on Rock. 
 
 ```{r Accounts Summary - Growth Over Time}
@@ -116,54 +121,6 @@ accountsUnpivotDataset %>%
 
 One challenge that churches face is to decrease the anonymity by inviting people to create a Rock account.
 In 2020, a spike happened because attendees had to move from physical to digital attendance due to COVID.
-
-```{r Accounts Summary}
-numberNewAccounts <- accountsUnpivotDataset %>%
-  filter(Type == "NewAccounts")
-numberNewCheckIns<- accountsUnpivotDataset %>%
-  filter(Type == "TotalNewCheckIns")
-numberLastCheckins <- accountsUnpivotDataset %>%
-  filter(Type == "TotalLastCheckIns")
-
-accountsUnpivotDataset %>%
-  filter(format(Mo,'%Y') >= "2018") %>%
-  filter(Type != "TotalAccounts") %>%
-  ggplot(aes(x = Mo, y = Number, color = Type)) +
-  geom_line() +
-  geom_hline(aes(yintercept = mean(numberNewAccounts$Number), linetype = "New Accounts Mean" )) +
-  geom_hline(aes(yintercept = mean(numberNewCheckIns$Number),linetype = "New Check Ins Mean" )) +
-  geom_hline(aes(yintercept = mean(numberLastCheckins$Number),linetype = "Last Check Ins Mean" )) +
-  labs(
-    title = "Accounts summary",
-    x = "Years",
-    y = "Number of accounts"
-    )
-```
-
-The number of `New Accounts` seems high, which is great:
-
-* mean of new accounts per month: 7806 
-* median of new accounts per month: 6069
-
-The number of `New Check Ins` is also very good and it seems to have a
-relationship with the number of `New Accounts`
-
-* mean of new check ins per month: 3706 
-* median of new check ins per month: 2934
-
-The number of `Last Check Ins` seems to follow the number of
-`New Accounts` and `New Check Ins` this behavior raises the question if
-people are leaving after their first experience.
-
-* mean of last check ins per month: 3473 
-* median of last check ins per month: 2150
-
-Moving forward, this analysis will try to answer the following
-questions:
-
--   What is a good way to measure growth?
--   Can we identify patterns that cause people to stay?
--   Can we identify patterns of people leaving the church?
 
 ## What is a good way to measure growth?
 
@@ -268,6 +225,65 @@ Why is this better than measuring attendance?
 * The number of members of churches will vary dramatically from church to church. Stickness helps to create a more feasible benchmark for churches.
 * The percentage perspective avoids misleading interpretations for churches with big attendance numbers.
 * It ensures that leaders are aiming a healthy growth. The activation rate, combined with stickiness, ensures that church leaders have the tools to track member addition without losing track of member deactivation. 
+
+
+
+```{r Factors distribution , message=FALSE, warning=FALSE}
+personDataset %>%
+  keep(is.numeric) %>% 
+  gather() %>% 
+  ggplot(aes(value)) +
+    facet_wrap(~ key, scales = "free") +
+    geom_histogram()
+
+
+```
+TODO: 
+  * There is room to clean up the data by removing weird number such negative age
+  * The distribution is too weird
+  
+```{r}
+library(stats)
+install.packages("factoextra")
+library(factoextra)
+library(mice)
+
+
+
+personDatasetSimplified <- personDataset %>%
+  select(-Id, -PersonCreatedDate, -FirstAttendanceDate, -LastAttendanceDate, -ActivationDate, -FirstGift, -LastGift)
+
+personDatasetSimplified$Age <- replace_na(personDatasetSimplified$Age, 0)
+personDatasetSimplified$TimeToActivate <- replace_na(personDatasetSimplified$TimeToActivate, 1000)
+
+md.pattern(personDatasetSimplified)
+summary(personDatasetSimplified)
+
+set.seed(123)
+km.res <- kmeans(personDatasetSimplified, 4, nstart = 25)
+print(km.res)
+```
+
+
+```{r}
+personDatasetSimplifiedNumeric <- personDatasetSimplified %>%
+  keep(is.numeric)
+
+results <- prcomp(personDatasetSimplifiedNumeric, scale = TRUE)
+
+results$rotation <- -1*results$rotation
+
+results$rotation
+
+results$x <- -1*results$x
+
+head(results$x)
+
+biplot(results, scale = 0)
+```
+
+
+
 
 Now that we have a better understanding of how often attendees are coming back or active let's see how long it takes for an attendee to become active after creating their account. 
 
