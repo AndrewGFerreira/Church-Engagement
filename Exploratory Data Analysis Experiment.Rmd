@@ -1,0 +1,343 @@
+---
+title: "Churn analysis for churches using Rock RMS (Records Management System)"
+author: "Andrew Ferreira"
+date: "10/14/2022"
+output:
+  html_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+# Introduction
+
+  A follower of Jesus Christ, also known as a Christian, believes in everything described in the Bible because of the idea that God himself inspired people to write this book so humanity would know how to have a relationship with him and make the most out of their lives. Throughout biblical history, God attempted multiple times and with different strategies to have relationships with humanity, but because of human nature, they rejected God in many ways. Still, one of its teachings is that God, the creator of the universe, has a perfect plan for every individual on Earth, not leaving room for odds or coincidence and that God created the church, a place for Christians to have community and help each other to keep their relationship with God. With that in mind, the figure below raises an interesting question: why would God create a data scientist at this stage of humanity? A stage where data drives many decisions in the world and a stage where the world population is bigger than ever before. A fellow Christian might conclude that God strategically placed him or her in this era with these skills so they would help God to bring more people to church so they can develop the so desired relationship with him. 
+
+```{r echo=FALSE, out.width='100%'}
+knitr::include_graphics('motivation.png')
+```
+
+# Topic Description
+
+  Churches are growing, and it is becoming harder for church leaders to know the name and spiritual journeys of church members. With that problem in mind, developers created different systems to assist leaders in managing their members. One popular and free solution is the Rock RMS. Rock is an open-source solution used by hundreds of churches worldwide that helps to track and manage the relationship between the church and its members by tracking common life events and demographics such as marriage, graduation, birthdays, address, and more. It also helps track religious events, known as "next steps," such as attendance, financial transactions, volunteering, baptism, joining a small group, and more.  
+
+As soon as a church installs Rock RMS, a problem is fixed: now they have
+data and means to know their members and help them grow spiritually.
+Finally, they can work on campaigns to invite more people to attend
+their church because it seems like they can easily measure growth by
+tracking the number of new accounts, new attenders, new givers, and new
+volunteers. However, a different problem emerges: there is too much
+data, and having a normalized database makes it harder to grasp data
+insights. This structure requires a data specialist to wrestle with the
+data, query the database, and answer, with data, questions worth asking.
+The problem is that very few churches will have a professional who knows
+SQL and statistics to dig into the tables and find answers. **This project
+aims to create a churn analysis framework using Rock RMS core tables
+from a church that uses the system as a case study.**
+
+# Research Description
+
+This project will use a multi-site church as a case study. This church started using Rock RMS in 2018, and it currently has 43 campuses distributed across the United States, with an average (mean) attendance count in 2022 of 67,320 per week across all the campuses and its online platform. This number is collected by manually counting the number of people on every campus, but this information is not on Rock. An attender can record attendance on Rock RMS by checking in in the app, checking in as a volunteer, or leaving their children in the kid's ministry. The average (mean) attendance recorded on Rock is 36,069 per week in the same period. Because this project aims to build a framework for other churches to use, only recorded attendance on Rock will be used. Still, it is important to mention the discrepancy because it reinforces the need of inviting people to use Rock RMS as much as possible. The discrepancy also reveals the attender anonymity that might be a challenge to overcome or accept throughout the analysis. 
+
+
+```{r include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(lubridate)
+```
+
+```{r Importing data, include=FALSE}
+accountsDataset <- read.csv("AccountStats4.csv", header = TRUE)
+personDataset <- read.csv("Experiment4.csv", header = TRUE)
+accountsUnpivotDataset <- read.csv("AccountStatsUnpivot.csv", header = TRUE)
+retentionDataset <- read.csv("Retention.csv", header = TRUE)
+```
+
+### Dataset
+```{r head datasets}
+head(accountsDataset)
+head(personDataset)
+head(accountsUnpivotDataset)
+head(retentionDataset)
+```
+
+
+```{r Initial transformations, include=FALSE}
+accountsDataset$Mo <- as.Date(accountsDataset$Mo)
+accountsDataset$WeekNumber <- as.Date(accountsDataset$WeekNumber)
+
+accountsUnpivotDataset$Mo <- as.Date(accountsUnpivotDataset$Mo)
+accountsUnpivotDataset$Type <- as.factor(accountsUnpivotDataset$Type)
+
+retentionDataset$PersonCreatedDate <- as.Date(retentionDataset$PersonCreatedDate)
+
+
+personDataset[personDataset == "NULL"] <- NA
+personDataset$PersonType <- as.factor(personDataset$PersonType)
+personDataset$TotalCheckIns <- as.integer(personDataset$TotalCheckIns)
+personDataset$Gender <- as.factor(personDataset$Gender)
+personDataset$MaritalStatusValueId <- as.factor(personDataset$MaritalStatusValueId)
+personDataset$AgeClassification <- as.factor(personDataset$AgeClassification)
+personDataset$Age <- as.integer(personDataset$Age)
+personDataset$PeopleInFamily <- as.integer(personDataset$PeopleInFamily)
+personDataset$ActivationDate <- as.Date(personDataset$ActivationDate)
+personDataset$TimeToActivate <- as.integer(personDataset$TimeToActivate)
+personDataset$IsImported <- as.factor(personDataset$IsImported)
+personDataset$PersonCreatedDate <- as.Date(personDataset$PersonCreatedDate)
+personDataset$FirstAttendanceDate <- as.Date(personDataset$FirstAttendanceDate)
+personDataset$DaysToFirstAttendance <- as.integer(personDataset$DaysToFirstAttendance)
+personDataset$MonthFirstAttendance <- as.factor(personDataset$MonthFirstAttendance)
+personDataset$MonthLastAttendance <- as.factor(personDataset$MonthLastAttendance)
+personDataset$LastAttendanceDate <- as.Date(personDataset$LastAttendanceDate)
+personDataset$MonthsBetweenFirstAndLastAttendance <- as.integer(personDataset$MonthsBetweenFirstAndLastAttendance)
+personDataset$NumberOfTransactions <- as.integer(personDataset$NumberOfTransactions)
+personDataset$FirstGift <- as.Date(personDataset$FirstGift)
+personDataset$LastGift <- as.Date(personDataset$LastGift)
+personDataset$MonthsBetweenFirstAndLastGiving <- as.integer(personDataset$MonthsBetweenFirstAndLastGiving)
+personDataset$ServingGroups <- as.integer(personDataset$ServingGroups)
+
+```
+
+Throughout the years, this church created over 1.7 million Rock accounts, but only 947,577 currently have some attendance recorded on Rock. 
+
+```{r Accounts Summary - Growth Over Time}
+accountsUnpivotDataset %>%
+  filter(Type == "TotalAccounts") %>%
+  ggplot(aes(x = Mo, y = Number)) +
+  geom_line() + 
+  ggtitle("Accumulative Rock accounts over time") +
+  xlab("Years") + 
+  ylab("Number of accounts")
+  
+```
+
+One challenge that churches face is to decrease the anonymity by inviting people to create a Rock account.
+In 2020, a spike happened because attendees had to move from physical to digital attendance due to COVID.
+
+```{r Accounts Summary}
+numberNewAccounts <- accountsUnpivotDataset %>%
+  filter(Type == "NewAccounts")
+numberNewCheckIns<- accountsUnpivotDataset %>%
+  filter(Type == "TotalNewCheckIns")
+numberLastCheckins <- accountsUnpivotDataset %>%
+  filter(Type == "TotalLastCheckIns")
+
+accountsUnpivotDataset %>%
+  filter(format(Mo,'%Y') >= "2018") %>%
+  filter(Type != "TotalAccounts") %>%
+  ggplot(aes(x = Mo, y = Number, color = Type)) +
+  geom_line() +
+  geom_hline(aes(yintercept = mean(numberNewAccounts$Number), linetype = "New Accounts Mean" )) +
+  geom_hline(aes(yintercept = mean(numberNewCheckIns$Number),linetype = "New Check Ins Mean" )) +
+  geom_hline(aes(yintercept = mean(numberLastCheckins$Number),linetype = "Last Check Ins Mean" )) +
+  labs(
+    title = "Accounts summary",
+    x = "Years",
+    y = "Number of accounts"
+    )
+```
+
+The number of `New Accounts` seems high, which is great:
+
+* mean of new accounts per month: 7806 
+* median of new accounts per month: 6069
+
+The number of `New Check Ins` is also very good and it seems to have a
+relationship with the number of `New Accounts`
+
+* mean of new check ins per month: 3706 
+* median of new check ins per month: 2934
+
+The number of `Last Check Ins` seems to follow the number of
+`New Accounts` and `New Check Ins` this behavior raises the question if
+people are leaving after their first experience.
+
+* mean of last check ins per month: 3473 
+* median of last check ins per month: 2150
+
+Moving forward, this analysis will try to answer the following
+questions:
+
+-   What is a good way to measure growth?
+-   Can we identify patterns that cause people to stay?
+-   Can we identify patterns of people leaving the church?
+
+## What is a good way to measure growth?
+
+While looking at reports to investors released by big tech companies such as Spotify, Hubspot, Asana, Salesforce, Zendesk, and Amplitude, there is one common metric to measure growth. `Monthly active users (MAU)`, or weekly active users (WAU), and daily active users (DAU) are ways to measure engagement. [Amplitude](https://amplitude.com/) is, in fact, a company specialized in helping these big tech companies evaluate their products, and they provided a [Product Metrics Guide](https://info.amplitude.com/rs/138-CDN-550/images/The%20Amplitude%20Guide%20to%20Product%20Metrics.pdf) to assist other companies in evaluating themselves. 
+
+One metric proposed by Amplitude is the `Activation rate` which can be obtained by  diving the number of people who complete a milestone activation event by the number of
+users who signed up to use the product. 
+
+A person can create a Rock account by many different ways even by simply submitting a form to receive a guide from a church. “Lead capture"^1^ is a concept from business that happens when a company captures the personal information, such as email or phone number, from a potential future customer. Whith this idea in mind, the number of new Rock accounts seems to measure the growth of the lead database instead of church engagement growth. Thefore, the metric proposed by Amplitude seems more relevant to measure growth, specially if the "milestone activation event" is attendance, the moment that a potential member attends a service from the church or donation. 
+
+[1] Developing effective web site landing pages. (2011). In J. Law, Business: the ultimate resource (3rd ed.). A&C Black. Credo Reference: https://oralroberts.idm.oclc.org/login?url=https://search.credoreference.com/content/entry/ultimatebusiness/developing_effective_web_site_landing_pages/0?institutionId=5550
+
+
+```{r Activation rate}
+accountsDataset %>%
+  filter(format(Mo,'%Y') >= "2018") %>%
+  rename(ActiveUsers = ActiveUsersMonth) %>%
+  select(Mo, TotalAccounts, ActiveUsers) %>%
+  distinct() %>%
+  mutate(ActivationRate = round((ActiveUsers / TotalAccounts * 100), digits = 2)) %>%
+  ggplot(aes(x = Mo, y = ActivationRate)) +
+  geom_line() +
+  labs(
+    title = "Activation rate over time",
+    subtitle = "Number of distinct users who has either an attendance or donation record divided by all users",
+    caption = "Good when trending up",
+    x = "Years",
+    y = "Activation Rate (%)"
+    )
+```
+
+The activation rate is trending down even before COVID, maybe because there is much investment towards capturing new leads and fewer resources activating them. 
+Things to consider:
+  - Nameless people are impacting the charts
+  - Children are included in the chart
+  - People manually imported from legacy systems are included in the chart
+  
+Let us now look at monthly active users (MAU), a metric often present on quarterly reports from big tech companies. Because churches usually have services during the weekend, let us also look at the weekly active users (WAU). 
+```{r Montlhy Active Users (MAU)}
+accountsDataset %>%
+  filter(format(Mo,'%Y') >= "2018") %>%
+  rename(ActiveUsers = ActiveUsersMonth) %>%
+  select(Mo,ActiveUsers) %>%
+  ggplot(aes(x = Mo, y = ActiveUsers)) +
+  geom_line() +
+  labs(
+      title = "Montlhy Active Users (MAU)",
+      subtitle = "Number of distinct users who has either an attendance or donation record by month",
+      caption = "Good when trending up",
+      x = "Years",
+      y = "Active Users"
+      )
+```
+
+The MAU is growing and is currently even higher than before COVID. This metric might explain the activation rate trending down because it seems like many people are activating quickly once, increasing the number of leads in the database. Still, MAU grows slow because we can't see those users returning in the next month. 
+
+Let's look at the WAU
+
+```{r Weekly Active Users (WAU)}
+accountsDataset %>%
+  filter(format(Mo,'%Y') >= "2018") %>%
+  rename(ActiveUsers = ActiveUsersWeek) %>%
+  select(WeekNumber,ActiveUsers) %>%
+  group_by(WeekNumber) %>%
+  summarise(TotalActiveUsers = sum(ActiveUsers)) %>%
+  ggplot(aes(x = WeekNumber, y = TotalActiveUsers)) +
+  geom_line() +
+  labs(
+      title = "Weekly Active Users (WAU)",
+      subtitle = "Number of distinct users who has either an attendance or donation record by week",
+      caption = "Good when trending up",
+      x = "Years",
+      y = "Active Users"
+      )
+```
+
+According to Amplitude, the WAU and MAU allow us to calculate the stickiness rate to show how often users or attendees return each month.
+
+```{r Stickiness (AVG(WAU)/MAU), message=FALSE, warning=FALSE}
+accountsDataset %>%
+  filter(format(Mo,'%Y') >= "2018") %>%
+  select(Mo,ActiveUsersMonth,ActiveUsersWeek) %>%
+  group_by(Mo) %>%
+  summarise(Stickiness = mean(ActiveUsersWeek) / ActiveUsersMonth) %>%
+  distinct() %>%
+  ggplot(aes(x = Mo, y = Stickiness * 100)) +
+  geom_line() +
+  labs(
+      title = "Stickiness",
+      subtitle = "Stickiness shows how often users or atendees are coming back each month.",
+      caption = "Good when close to 100%",
+      x = "Years",
+      y = "Stickiness (%)"
+      )
+  
+```
+
+The stickiness is trending down, usually around 40% to 45%, which tells us that attendees typically activate 2 out of 4 weeks a month. Stickiness seems to be a good metric for churches to use because it is easy to understand and measure. Any church would want 100% stickiness, meaning their members return weekly.
+
+Why is this better than measuring attendance? 
+
+* The number of members of churches will vary dramatically from church to church. Stickness helps to create a more feasible benchmark for churches.
+* The percentage perspective avoids misleading interpretations for churches with big attendance numbers.
+* It ensures that leaders are aiming a healthy growth. The activation rate, combined with stickiness, ensures that church leaders have the tools to track member addition without losing track of member deactivation. 
+
+Now that we have a better understanding of how often attendees are coming back or active let's see how long it takes for an attendee to become active after creating their account. 
+
+```{r Time to Activate, message=FALSE, warning=FALSE}
+personDataset %>%
+  filter(format(PersonCreatedDate,'%Y') >= "2018" & TimeToActivate >= 0 ) %>%
+  select(Id, PersonCreatedDate, TimeToActivate, ActivationDate) %>%
+  mutate(Mo = floor_date(ymd(PersonCreatedDate), 'month' ) ) %>%
+  group_by(Mo) %>%
+  summarise(activation = mean(TimeToActivate)) %>%
+  ggplot(aes(x = Mo, y = activation)) +
+  geom_line() +
+  labs(
+      title = "Days to activate",
+      subtitle = "Mean days to activate (donate or attend).",
+      caption = "Good when trending down",
+      x = "Years",
+      y = "Mean days to activation"
+      )
+```
+
+```{r Time to Activate Histogram, message=FALSE, warning=FALSE}
+personDataset %>%
+  filter(format(PersonCreatedDate,'%Y') >= "2018" & TimeToActivate >= 0 & TimeToActivate <= 100) %>%
+  select(Id, PersonCreatedDate, TimeToActivate, ActivationDate) %>%
+  ggplot(aes(x=TimeToActivate)) +
+  geom_histogram(binwidth=20) +
+  labs(
+      title = "Days to activate histogram",
+      x = "Days to activate",
+      y = "Frequency"
+      )
+```
+As we can observe, the church is doing an excellent job by quickly activating its members. The histogram shows that most of the time, the activation happens within 20 days after creating the Rock account. The activation might become a good indicator of whether the new Rock account is just a new lead or is, indeed, a potential member. 
+
+### Summary
+
+At this point, we learned a lot about the speed and growth of the church. 
+
+We saw that measuring growth just by the number of new accounts is not enough because, frequently, a new account may never engage with the church. 
+
+The monthly/weekly activation users (MAU/WAU - the measure of members who either donated or attended a service) seem to provide a better perspective because it pays close attention to engaged members. 
+
+These metrics allow calculating the Stickiness, which tells us that, in this case, members are engaging 2 out of 4 weeks every month. Stickiness is an excellent metric for church leaders to place efforts into improving it.
+
+Finally, we calculated how fast members started engaging with the church after creating an account. Our case study results are surprisingly good, with the mean decreasing from 400 to very close to 0 days over the years. 
+
+Now it is time to find metrics to help us understand if this church is keeping its member engaged over time. 
+
+## Can we identify patterns that cause people to stay?
+
+
+```{r Unbounded Retention}
+retentionDataset %>%
+  mutate(Mo = floor_date(ymd(PersonCreatedDate), 'month' ) ) %>%
+  filter(RetentionDays < 60) %>%
+  ggplot(aes(x=RetentionDays)) +
+  geom_histogram(binwidth=7, aes(y = ..density..)) +
+  geom_density(lwd = 1, colour = 4,fill = 4, alpha = 0.25) +
+  labs(
+      title = "Retention",
+      subtitle = "measures how often your users are coming back to engage with your product.",
+      caption = "Good when high density is close to zero",
+      x = "Days to come back -- each bin represents a week",
+      y = "Density"
+      )
+write.csv(personDataset, "data.csv")
+```
+The unbounded retention metric helps grocery shops or travel apps that do not expect a customer to come back every day to measure when their customer returns. It helps measure customer engagement. 
+
+Since this is a church, I decided to plot the result in a histogram where each bin represents each week (7 days) so we can see how many weeks it takes for a member to return after creating their accounts. 
+
+The retention is often calculated in a rate fashion, so I am plotting the density so we can see that roughly 30% of new members will come back within three weeks
