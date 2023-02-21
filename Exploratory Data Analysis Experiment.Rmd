@@ -228,16 +228,105 @@ Why is this better than measuring attendance?
 
 
 
-```{r Factors distribution , message=FALSE, warning=FALSE}
+```{r Investigating factors , message=FALSE, warning=FALSE}
+library(tidyr)
+library(tidymodels)
+library(rpart)
+library(rpart.plot)
+
+boxplot(personDataset$Age, outline = FALSE)
+outliersAge <- boxplot(personDataset$Age, plot=FALSE)$out
+
+
+boxplot(personDataset$PeopleInFamily, outline = FALSE)
+outliersPeoplInFamily <- boxplot(personDataset$PeopleInFamily, plot=FALSE)$out
+
+
+boxplot(personDataset$TimeToActivate, outline = FALSE)
+outliersTimeToActivate <- boxplot(personDataset$TimeToActivate, plot=FALSE)$out
+
+
+boxplot(personDataset$DaysToFirstAttendance, outline = TRUE)
+outliersDaysToFirstAttendance <- boxplot(personDataset$DaysToFirstAttendance, plot=FALSE)$out
+## NOT SURE ABOUT THIS ONE
+
+
+boxplot(personDataset$MonthsBetweenFirstAndLastAttendance, outline = FALSE)
+outliersMonthsBetweenFirstAndLastAttendance <- boxplot(personDataset$MonthsBetweenFirstAndLastAttendance, plot=FALSE)$out
+
+boxplot(personDataset$NumberOfTransactions, outline = TRUE)
+outliersMonthsBetweenFirstAndLastAttendance <- boxplot(personDataset$MonthsBetweenFirstAndLastAttendance, plot=FALSE)$out
+## NOT SURE ABOUT THIS ONE EITHER
+
+boxplot(personDataset$MonthsBetweenFirstAndLastGiving, outline = TRUE)
+outliersMonthsBetweenFirstAndLastAttendance <- boxplot(personDataset$MonthsBetweenFirstAndLastAttendance, plot=FALSE)$out
+## NOT SURE ABOUT THIS ONE EITHER
+
+boxplot(personDataset$ServingGroups, outline = FALSE)
+outliersMonthsBetweenFirstAndLastAttendance <- boxplot(personDataset$MonthsBetweenFirstAndLastAttendance, plot=FALSE)$out
+## NOT SURE ABOUT THIS ONE EITHER
+
+
+
+# Evaluating numeric variables
 personDataset %>%
+  select(-Id, -Baptism, -CommitToChrist, -IAnNew, -PrayerRequest, -RenewCommitToChrist, -X3MonthsTitheChallenge) %>%
+  mutate(Age = ifelse(is.na(Age), 0, Age)) %>%
+  filter(IsImported == 0) %>%
   keep(is.numeric) %>% 
+  filter(TimeToActivate > 0) %>%
+  filter(!Age %in% outliersAge) %>%
+  filter(!PeopleInFamily %in% outliersPeoplInFamily) %>%
+  filter(!TimeToActivate %in% outliersTimeToActivate) %>%
+  filter(!MonthsBetweenFirstAndLastAttendance %in% outliersMonthsBetweenFirstAndLastAttendance) %>%
   gather() %>% 
   ggplot(aes(value)) +
     facet_wrap(~ key, scales = "free") +
     geom_histogram()
 
 
+
+cleanPersonDataset <- personDataset %>%
+  select(-Id, -Baptism, -CommitToChrist, -IAnNew, -PrayerRequest, -RenewCommitToChrist, -X3MonthsTitheChallenge, -ActivationDate, -PersonCreatedDate, -FirstAttendanceDate, -LastAttendanceDate, -FirstGift, -LastGift, -MonthFirstAttendance, -MonthLastAttendance, ) %>%
+  mutate(Age = ifelse(is.na(Age), 0, Age)) %>%
+  ##filter(IsImported == 0) %>%
+  filter(TimeToActivate > 0) %>%
+  filter(!Age %in% outliersAge) %>%
+  filter(!PeopleInFamily %in% outliersPeoplInFamily) %>%
+  filter(!TimeToActivate %in% outliersTimeToActivate) %>%
+  filter(!MonthsBetweenFirstAndLastAttendance %in% outliersMonthsBetweenFirstAndLastAttendance) %>%
+  mutate(TwoMonthsWihtoutActivity = as.factor(TwoMonthsWihtoutActivity)) %>%
+  mutate(TwoMonthsWihtoutActivity = str_replace(TwoMonthsWihtoutActivity, "1", "LeaveTheChurch")) %>%
+  mutate(TwoMonthsWihtoutActivity = str_replace(TwoMonthsWihtoutActivity, "0", "StayAtChurch")) %>%
+  mutate(MaritalStatusValueId = str_replace(MaritalStatusValueId, "143", "Married")) %>%
+  mutate(MaritalStatusValueId = str_replace(MaritalStatusValueId, "144", "Single")) %>%
+  mutate(MaritalStatusValueId = str_replace(MaritalStatusValueId, "675", "Unknown")) %>%
+  mutate(MaritalStatusValueId = str_replace(MaritalStatusValueId, "1792", "Unknown")) %>%
+  mutate(MaritalStatusValueId = str_replace(MaritalStatusValueId, "1886", "Unknown")) %>%
+  mutate(MaritalStatusValueId = str_replace(MaritalStatusValueId, "3471", "Unknown"))
+  
+  
+summary(cleanPersonDataset)
+
+set.seed(987)
+
+PersonDataset_split <- initial_split(cleanPersonDataset, prop = 0.80, strata = TwoMonthsWihtoutActivity)
+PersonDataset_training <- PersonDataset_split %>% training()
+PersonDataset_test <- PersonDataset_split %>% testing()
+
+
+tree_model = rpart(TwoMonthsWihtoutActivity ~ ., data = PersonDataset_training, method="class", minsplit = 10, minbucket=3) 
+summary(tree_model)
+
+rpart.plot(tree_model)
+
+test_tree_model <- predict(tree_model, PersonDataset_test, type = 'class')
+table_mat <- table(PersonDataset_test$TwoMonthsWihtoutActivity, test_tree_model)
+accuracy <- sum(diag(table_mat)) / sum(table_mat)
+table_mat
+accuracy
 ```
+
 TODO: 
   * There is room to clean up the data by removing weird number such negative age
   * The distribution is too weird
