@@ -30,7 +30,7 @@ library(xgboost)
 
 ```{r Importing data, include=FALSE}
 accountsDataset <- read.csv("datasets/AccountStats4.csv", header = TRUE)
-personDataset <- read.csv("datasets/Experiment4.csv", header = TRUE)
+personDataset <- read.csv("datasets/Experiment5.csv", header = TRUE)
 accountsUnpivotDataset <- read.csv("datasets/AccountStatsUnpivot.csv", header = TRUE)
 retentionDataset <- read.csv("datasets/Retention.csv", header = TRUE)
 ```
@@ -68,7 +68,7 @@ personDataset$FirstAttendanceDate <- as.Date(personDataset$FirstAttendanceDate)
 personDataset$DaysToFirstAttendance <- as.integer(personDataset$DaysToFirstAttendance)
 personDataset$MonthFirstAttendance <- as.factor(personDataset$MonthFirstAttendance)
 personDataset$MonthLastAttendance <- as.factor(personDataset$MonthLastAttendance)
-personDataset$LastAttendanceDate <- as.Date(personDataset$LastAttendanceDate)
+personDataset$LastAttendance <- as.Date(personDataset$LastAttendance)
 personDataset$MonthsBetweenFirstAndLastAttendance <- as.integer(personDataset$MonthsBetweenFirstAndLastAttendance)
 personDataset$NumberOfTransactions <- as.integer(personDataset$NumberOfTransactions)
 personDataset$FirstGift <- as.Date(personDataset$FirstGift)
@@ -237,19 +237,21 @@ outliersMonthsBetweenFirstAndLastAttendance <- boxplot(personDataset$MonthsBetwe
 outliersMonthsBetweenFirstAndLastAttendance <- boxplot(personDataset$MonthsBetweenFirstAndLastAttendance, plot=FALSE)$out
 ## NOT SURE ABOUT THIS ONE EITHER
 
-
+#boxplot(personDataset$TotalCheckIns, outline = FALSE)
+outliersTotalCheckIns <- boxplot(personDataset$TotalCheckIns, outline = FALSE)$out
 
 # Evaluating numeric variables
 personDataset %>%
-  select(-Id, -Baptism, -CommitToChrist, -IAnNew, -PrayerRequest, -RenewCommitToChrist, -X3MonthsTitheChallenge) %>%
+  select(-Id, -Baptism, -CommitToChrist, -IAnNew, -PrayerRequest, -RenewCommitToChrist, -X3MonthTitheChallenge, -DaysToFirstAttendance) %>%
   mutate(Age = ifelse(is.na(Age), 0, Age)) %>%
-  filter(IsImported == 0) %>%
+  #filter(IsImported == 0) %>%
   keep(is.numeric) %>% 
   filter(TimeToActivate > 0) %>%
   filter(!Age %in% outliersAge) %>%
   filter(!PeopleInFamily %in% outliersPeoplInFamily) %>%
   filter(!TimeToActivate %in% outliersTimeToActivate) %>%
   filter(!MonthsBetweenFirstAndLastAttendance %in% outliersMonthsBetweenFirstAndLastAttendance) %>%
+  filter(!TotalCheckIns %in% outliersTotalCheckIns) %>%
   gather() %>% 
   ggplot(aes(value)) +
     facet_wrap(~ key, scales = "free") +
@@ -258,140 +260,149 @@ personDataset %>%
 
 
 cleanPersonDataset <- personDataset %>%
-  select(-Id, -Baptism, -CommitToChrist, -IAnNew, -PrayerRequest, -RenewCommitToChrist, -X3MonthsTitheChallenge, -ActivationDate, -PersonCreatedDate, -FirstAttendanceDate, -LastAttendanceDate, -FirstGift, -LastGift, -MonthFirstAttendance, -MonthLastAttendance, ) %>%
+  select(-Id, -Baptism, -CommitToChrist, -IAnNew, -PrayerRequest, -RenewCommitToChrist, -X3MonthTitheChallenge, -ActivationDate, -PersonCreatedDate, -FirstAttendance, -LastAttendance, -FirstGift, -LastGift, -MonthFirstAttendance, -MonthLastAttendance, -FirstAttendanceDate) %>%
   mutate(Age = ifelse(is.na(Age), 0, Age)) %>%
   ##filter(IsImported == 0) %>%
   filter(TimeToActivate > 0) %>%
   filter(!Age %in% outliersAge) %>%
   filter(!PeopleInFamily %in% outliersPeoplInFamily) %>%
   filter(!TimeToActivate %in% outliersTimeToActivate) %>%
+  filter(!TotalCheckIns %in% outliersTotalCheckIns) %>%
   filter(!MonthsBetweenFirstAndLastAttendance %in% outliersMonthsBetweenFirstAndLastAttendance) %>%
-  mutate(TwoMonthsWihtoutActivity = as.factor(TwoMonthsWihtoutActivity)) %>%
-  mutate(TwoMonthsWihtoutActivity = str_replace(TwoMonthsWihtoutActivity, "1", "LeaveTheChurch")) %>%
-  mutate(TwoMonthsWihtoutActivity = str_replace(TwoMonthsWihtoutActivity, "0", "StayAtChurch")) %>%
+  filter(!DaysToFirstAttendance %in% outliersDaysToFirstAttendance) %>%
+  mutate(TwoMonthsWithoutActivity = as.factor(TwoMonthsWithoutActivity)) %>%
+  mutate(TwoMonthsWithoutActivity = str_replace(TwoMonthsWithoutActivity, "1", "LeaveTheChurch")) %>%
+  mutate(TwoMonthsWithoutActivity = str_replace(TwoMonthsWithoutActivity, "0", "StayAtChurch")) %>%
   mutate(MaritalStatusValueId = str_replace(MaritalStatusValueId, "143", "Married")) %>%
   mutate(MaritalStatusValueId = str_replace(MaritalStatusValueId, "144", "Single")) %>%
   mutate(MaritalStatusValueId = str_replace(MaritalStatusValueId, "675", "Unknown")) %>%
   mutate(MaritalStatusValueId = str_replace(MaritalStatusValueId, "1792", "Unknown")) %>%
   mutate(MaritalStatusValueId = str_replace(MaritalStatusValueId, "1886", "Unknown")) %>%
    mutate(MaritalStatusValueId = str_replace(MaritalStatusValueId, "676", "Unknown")) %>%
-  mutate(MaritalStatusValueId = str_replace(MaritalStatusValueId, "3471", "Unknown"))
+  mutate(MaritalStatusValueId = str_replace(MaritalStatusValueId, "3471", "Unknown")) %>%
+  mutate(MaritalStatusValueId = str_replace(MaritalStatusValueId, "2198", "Unknown")) %>%
+  mutate(MaritalStatusValueId = as.factor(MaritalStatusValueId)) %>%
+  mutate(ServingGroups = ifelse(is.na(ServingGroups), 0, ServingGroups)) %>%
+  mutate(Volunteer = as.factor(ifelse(ServingGroups > 0, 1, 0))) %>%
+  select(-ServingGroups) %>%
+  mutate(Gender = str_replace(Gender, "0", "Unknown")) %>%
+  mutate(Gender = str_replace(Gender, "1", "Male")) %>%
+  mutate(Gender = str_replace(Gender, "2", "Female"))
+  
   
 ```
 
 ```{r testing DT 10x}
 
 set.seed(987)
-PersonDataset_split <- initial_split(cleanPersonDataset, prop = 0.80, strata = TwoMonthsWihtoutActivity)
+PersonDataset_split <- initial_split(cleanPersonDataset, prop = 0.80, strata = TwoMonthsWithoutActivity)
 PersonDataset_training <- PersonDataset_split %>% training()
 PersonDataset_test <- PersonDataset_split %>% testing()
 
-dt1 = rpart(TwoMonthsWihtoutActivity ~ ., data = PersonDataset_training, method="class", minsplit = 10, minbucket=3) 
+dt1 = rpart(TwoMonthsWithoutActivity ~ ., data = PersonDataset_training, method="class", minsplit = 10, minbucket=3) 
 predict_dt1 <- predict(dt1, PersonDataset_test, type = 'class')
-cm_dt1 <- confusionMatrix(table(PersonDataset_test$TwoMonthsWihtoutActivity, predict_dt1))
+cm_dt1 <- confusionMatrix(table(PersonDataset_test$TwoMonthsWithoutActivity, predict_dt1))
 acc_dt1 <- cm_dt1$overall['Accuracy']
 rpart.plot(dt1)
 
 set.seed(887)
-PersonDataset_split <- initial_split(cleanPersonDataset, prop = 0.80, strata = TwoMonthsWihtoutActivity)
+PersonDataset_split <- initial_split(cleanPersonDataset, prop = 0.80, strata = TwoMonthsWithoutActivity)
 PersonDataset_training <- PersonDataset_split %>% training()
 PersonDataset_test <- PersonDataset_split %>% testing()
 
-dt2 = rpart(TwoMonthsWihtoutActivity ~ ., data = PersonDataset_training, method="class", minsplit = 10, minbucket=3) 
+dt2 = rpart(TwoMonthsWithoutActivity ~ ., data = PersonDataset_training, method="class", minsplit = 10, minbucket=3) 
 predict_dt2 <- predict(dt2, PersonDataset_test, type = 'class')
-cm_dt2 <- confusionMatrix(table(PersonDataset_test$TwoMonthsWihtoutActivity, predict_dt2))
+cm_dt2 <- confusionMatrix(table(PersonDataset_test$TwoMonthsWithoutActivity, predict_dt2))
 acc_dt2 <- cm_dt2$overall['Accuracy']
 rpart.plot(dt2)
 
 set.seed(787)
-PersonDataset_split <- initial_split(cleanPersonDataset, prop = 0.80, strata = TwoMonthsWihtoutActivity)
+PersonDataset_split <- initial_split(cleanPersonDataset, prop = 0.80, strata = TwoMonthsWithoutActivity)
 PersonDataset_training <- PersonDataset_split %>% training()
 PersonDataset_test <- PersonDataset_split %>% testing()
 
-dt3 = rpart(TwoMonthsWihtoutActivity ~ ., data = PersonDataset_training, method="class", minsplit = 10, minbucket=3) 
+dt3 = rpart(TwoMonthsWithoutActivity ~ ., data = PersonDataset_training, method="class", minsplit = 10, minbucket=3) 
 predict_dt3 <- predict(dt3, PersonDataset_test, type = 'class')
-cm_dt3 <- confusionMatrix(table(PersonDataset_test$TwoMonthsWihtoutActivity, predict_dt3))
+cm_dt3 <- confusionMatrix(table(PersonDataset_test$TwoMonthsWithoutActivity, predict_dt3))
 acc_dt3 <- cm_dt3$overall['Accuracy']
 rpart.plot(dt3)
 
 set.seed(687)
-PersonDataset_split <- initial_split(cleanPersonDataset, prop = 0.80, strata = TwoMonthsWihtoutActivity)
+PersonDataset_split <- initial_split(cleanPersonDataset, prop = 0.80, strata = TwoMonthsWithoutActivity)
 PersonDataset_training <- PersonDataset_split %>% training()
 PersonDataset_test <- PersonDataset_split %>% testing()
 
-dt4 = rpart(TwoMonthsWihtoutActivity ~ ., data = PersonDataset_training, method="class", minsplit = 10, minbucket=3) 
+dt4 = rpart(TwoMonthsWithoutActivity ~ ., data = PersonDataset_training, method="class", minsplit = 10, minbucket=3) 
 predict_dt4 <- predict(dt4, PersonDataset_test, type = 'class')
-cm_dt4 <- confusionMatrix(table(PersonDataset_test$TwoMonthsWihtoutActivity, predict_dt4))
+cm_dt4 <- confusionMatrix(table(PersonDataset_test$TwoMonthsWithoutActivity, predict_dt4))
 acc_dt4 <- cm_dt4$overall['Accuracy']
 rpart.plot(dt4)
 
 set.seed(587)
-PersonDataset_split <- initial_split(cleanPersonDataset, prop = 0.80, strata = TwoMonthsWihtoutActivity)
+PersonDataset_split <- initial_split(cleanPersonDataset, prop = 0.80, strata = TwoMonthsWithoutActivity)
 PersonDataset_training <- PersonDataset_split %>% training()
 PersonDataset_test <- PersonDataset_split %>% testing()
 
-dt5 = rpart(TwoMonthsWihtoutActivity ~ ., data = PersonDataset_training, method="class", minsplit = 10, minbucket=3) 
+dt5 = rpart(TwoMonthsWithoutActivity ~ ., data = PersonDataset_training, method="class", minsplit = 10, minbucket=3) 
 predict_dt5 <- predict(dt5, PersonDataset_test, type = 'class')
-cm_dt5 <- confusionMatrix(table(PersonDataset_test$TwoMonthsWihtoutActivity, predict_dt5))
+cm_dt5 <- confusionMatrix(table(PersonDataset_test$TwoMonthsWithoutActivity, predict_dt5))
 acc_dt5 <- cm_dt5$overall['Accuracy']
 rpart.plot(dt5)
 
 set.seed(487)
-PersonDataset_split <- initial_split(cleanPersonDataset, prop = 0.80, strata = TwoMonthsWihtoutActivity)
+PersonDataset_split <- initial_split(cleanPersonDataset, prop = 0.80, strata = TwoMonthsWithoutActivity)
 PersonDataset_training <- PersonDataset_split %>% training()
 PersonDataset_test <- PersonDataset_split %>% testing()
 
-dt6 = rpart(TwoMonthsWihtoutActivity ~ ., data = PersonDataset_training, method="class", minsplit = 10, minbucket=3) 
+dt6 = rpart(TwoMonthsWithoutActivity ~ ., data = PersonDataset_training, method="class", minsplit = 10, minbucket=3) 
 predict_dt6 <- predict(dt6, PersonDataset_test, type = 'class')
-cm_dt6 <- confusionMatrix(table(PersonDataset_test$TwoMonthsWihtoutActivity, predict_dt6))
+cm_dt6 <- confusionMatrix(table(PersonDataset_test$TwoMonthsWithoutActivity, predict_dt6))
 acc_dt6 <- cm_dt6$overall['Accuracy']
 rpart.plot(dt6)
 
 set.seed(387)
-PersonDataset_split <- initial_split(cleanPersonDataset, prop = 0.80, strata = TwoMonthsWihtoutActivity)
+PersonDataset_split <- initial_split(cleanPersonDataset, prop = 0.80, strata = TwoMonthsWithoutActivity)
 PersonDataset_training <- PersonDataset_split %>% training()
 PersonDataset_test <- PersonDataset_split %>% testing()
 
-dt7 = rpart(TwoMonthsWihtoutActivity ~ ., data = PersonDataset_training, method="class", minsplit = 10, minbucket=3) 
+dt7 = rpart(TwoMonthsWithoutActivity ~ ., data = PersonDataset_training, method="class", minsplit = 10, minbucket=3) 
 predict_dt7 <- predict(dt7, PersonDataset_test, type = 'class')
-cm_dt7 <- confusionMatrix(table(PersonDataset_test$TwoMonthsWihtoutActivity, predict_dt7))
+cm_dt7 <- confusionMatrix(table(PersonDataset_test$TwoMonthsWithoutActivity, predict_dt7))
 acc_dt7 <- cm_dt7$overall['Accuracy']
 rpart.plot(dt7)
 
 set.seed(287)
-PersonDataset_split <- initial_split(cleanPersonDataset, prop = 0.80, strata = TwoMonthsWihtoutActivity)
+PersonDataset_split <- initial_split(cleanPersonDataset, prop = 0.80, strata = TwoMonthsWithoutActivity)
 PersonDataset_training <- PersonDataset_split %>% training()
 PersonDataset_test <- PersonDataset_split %>% testing()
 
-dt8 = rpart(TwoMonthsWihtoutActivity ~ ., data = PersonDataset_training, method="class", minsplit = 10, minbucket=3) 
+dt8 = rpart(TwoMonthsWithoutActivity ~ ., data = PersonDataset_training, method="class", minsplit = 10, minbucket=3) 
 predict_dt8 <- predict(dt8, PersonDataset_test, type = 'class')
-cm_dt8 <- confusionMatrix(table(PersonDataset_test$TwoMonthsWihtoutActivity, predict_dt8))
+cm_dt8 <- confusionMatrix(table(PersonDataset_test$TwoMonthsWithoutActivity, predict_dt8))
 acc_dt8 <- cm_dt8$overall['Accuracy']
 rpart.plot(dt8)
 
 set.seed(187)
-PersonDataset_split <- initial_split(cleanPersonDataset, prop = 0.80, strata = TwoMonthsWihtoutActivity)
+PersonDataset_split <- initial_split(cleanPersonDataset, prop = 0.80, strata = TwoMonthsWithoutActivity)
 PersonDataset_training <- PersonDataset_split %>% training()
 PersonDataset_test <- PersonDataset_split %>% testing()
 
-dt9 = rpart(TwoMonthsWihtoutActivity ~ ., data = PersonDataset_training, method="class", minsplit = 10, minbucket=3) 
+dt9 = rpart(TwoMonthsWithoutActivity ~ ., data = PersonDataset_training, method="class", minsplit = 10, minbucket=3) 
 predict_dt9 <- predict(dt9, PersonDataset_test, type = 'class')
-cm_dt9 <- confusionMatrix(table(PersonDataset_test$TwoMonthsWihtoutActivity, predict_dt9))
+cm_dt9 <- confusionMatrix(table(PersonDataset_test$TwoMonthsWithoutActivity, predict_dt9))
 acc_dt9 <- cm_dt9$overall['Accuracy']
 rpart.plot(dt9)
 
 set.seed(87)
-PersonDataset_split <- initial_split(cleanPersonDataset, prop = 0.80, strata = TwoMonthsWihtoutActivity)
+PersonDataset_split <- initial_split(cleanPersonDataset, prop = 0.80, strata = TwoMonthsWithoutActivity)
 PersonDataset_training <- PersonDataset_split %>% training()
 PersonDataset_test <- PersonDataset_split %>% testing()
 
-dt10 = rpart(TwoMonthsWihtoutActivity ~ ., data = PersonDataset_training, method="class", minsplit = 10, minbucket=3) 
+dt10 = rpart(TwoMonthsWithoutActivity ~ ., data = PersonDataset_training, method="class", minsplit = 10, minbucket=3) 
 predict_dt10 <- predict(dt10, PersonDataset_test, type = 'class')
-cm_dt10 <- confusionMatrix(table(PersonDataset_test$TwoMonthsWihtoutActivity, predict_dt10))
+cm_dt10 <- confusionMatrix(table(PersonDataset_test$TwoMonthsWithoutActivity, predict_dt10))
 acc_dt10 <- cm_dt10$overall['Accuracy']
 rpart.plot(dt10)
-
-
 
 #TODO
 # Find another way to test the dimensioonaity redsuction
@@ -408,7 +419,7 @@ rpart.plot(dt10)
 
 ```{r running a different model}
 cleanPersonDataset_model2 <- cleanPersonDataset %>%
-  mutate(TwoMonthsWihtoutActivity = as.character(cleanPersonDataset$TwoMonthsWihtoutActivity)) %>%
+  mutate(TwoMonthsWithoutActivity = as.character(cleanPersonDataset$TwoMonthsWithoutActivity)) %>%
   mutate(MaritalStatusValueId = as.character(cleanPersonDataset$MaritalStatusValueId)) %>%
   filter(PersonType == 1) %>%
   select(-PersonType, -MaritalStatusValueId) %>%
@@ -416,16 +427,16 @@ cleanPersonDataset_model2 <- cleanPersonDataset %>%
   mutate(Gender = as.numeric(Gender)) %>%
   mutate(AgeClassification = as.numeric(AgeClassification)) %>%
   mutate(IsImported = as.numeric(IsImported)) %>%
-  mutate(TwoMonthsWihtoutActivity = as.numeric(ifelse(TwoMonthsWihtoutActivity == "StayAtChurch", 1,0)))
+  mutate(TwoMonthsWithoutActivity = as.numeric(ifelse(TwoMonthsWithoutActivity == "StayAtChurch", 1,0)))
 
 
 set.seed(987)
-PersonDataset_split_model2 <- initial_split(cleanPersonDataset_model2, prop = 0.80, strata = TwoMonthsWihtoutActivity)
+PersonDataset_split_model2 <- initial_split(cleanPersonDataset_model2, prop = 0.80, strata = TwoMonthsWithoutActivity)
 PersonDataset_training_model2 <- PersonDataset_split_model2 %>% training()
 PersonDataset_test_model2 <- PersonDataset_split_model2 %>% testing()
 
-dtrain <- xgb.DMatrix(data = as.matrix(PersonDataset_training_model2[1:length(PersonDataset_training_model2)-1]) ,label=PersonDataset_training_model2$TwoMonthsWihtoutActivity)
-dtest <- xgb.DMatrix(data = as.matrix(PersonDataset_test_model2[1:length(PersonDataset_test_model2)-1]), label=PersonDataset_test_model2$TwoMonthsWihtoutActivity)
+dtrain <- xgb.DMatrix(data = as.matrix(PersonDataset_training_model2[1:length(PersonDataset_training_model2)-1]) ,label=PersonDataset_training_model2$TwoMonthsWithoutActivity)
+dtest <- xgb.DMatrix(data = as.matrix(PersonDataset_test_model2[1:length(PersonDataset_test_model2)-1]), label=PersonDataset_test_model2$TwoMonthsWithoutActivity)
 
 watchlist <- list(train=dtrain, test=dtest)
 
@@ -436,12 +447,12 @@ xgb.plot.importance(importance_matrix = importance_matrix)
 xgb.plot.tree(model = bst)
 
 set.seed(887)
-PersonDataset_split_model2 <- initial_split(cleanPersonDataset_model2, prop = 0.80, strata = TwoMonthsWihtoutActivity)
+PersonDataset_split_model2 <- initial_split(cleanPersonDataset_model2, prop = 0.80, strata = TwoMonthsWithoutActivity)
 PersonDataset_training_model2 <- PersonDataset_split_model2 %>% training()
 PersonDataset_test_model2 <- PersonDataset_split_model2 %>% testing()
 
-dtrain <- xgb.DMatrix(data = as.matrix(PersonDataset_training_model2[1:length(PersonDataset_training_model2)-1]) ,label=PersonDataset_training_model2$TwoMonthsWihtoutActivity)
-dtest <- xgb.DMatrix(data = as.matrix(PersonDataset_test_model2[1:length(PersonDataset_test_model2)-1]), label=PersonDataset_test_model2$TwoMonthsWihtoutActivity)
+dtrain <- xgb.DMatrix(data = as.matrix(PersonDataset_training_model2[1:length(PersonDataset_training_model2)-1]) ,label=PersonDataset_training_model2$TwoMonthsWithoutActivity)
+dtest <- xgb.DMatrix(data = as.matrix(PersonDataset_test_model2[1:length(PersonDataset_test_model2)-1]), label=PersonDataset_test_model2$TwoMonthsWithoutActivity)
 
 watchlist <- list(train=dtrain, test=dtest)
 
@@ -452,12 +463,12 @@ xgb.plot.importance(importance_matrix = importance_matrix)
 #xgb.plot.tree(model = bst)
 
 set.seed(787)
-PersonDataset_split_model2 <- initial_split(cleanPersonDataset_model2, prop = 0.80, strata = TwoMonthsWihtoutActivity)
+PersonDataset_split_model2 <- initial_split(cleanPersonDataset_model2, prop = 0.80, strata = TwoMonthsWithoutActivity)
 PersonDataset_training_model2 <- PersonDataset_split_model2 %>% training()
 PersonDataset_test_model2 <- PersonDataset_split_model2 %>% testing()
 
-dtrain <- xgb.DMatrix(data = as.matrix(PersonDataset_training_model2[1:length(PersonDataset_training_model2)-1]) ,label=PersonDataset_training_model2$TwoMonthsWihtoutActivity)
-dtest <- xgb.DMatrix(data = as.matrix(PersonDataset_test_model2[1:length(PersonDataset_test_model2)-1]), label=PersonDataset_test_model2$TwoMonthsWihtoutActivity)
+dtrain <- xgb.DMatrix(data = as.matrix(PersonDataset_training_model2[1:length(PersonDataset_training_model2)-1]) ,label=PersonDataset_training_model2$TwoMonthsWithoutActivity)
+dtest <- xgb.DMatrix(data = as.matrix(PersonDataset_test_model2[1:length(PersonDataset_test_model2)-1]), label=PersonDataset_test_model2$TwoMonthsWithoutActivity)
 
 watchlist <- list(train=dtrain, test=dtest)
 
@@ -468,12 +479,12 @@ xgb.plot.importance(importance_matrix = importance_matrix)
 #xgb.plot.tree(model = bst)
 
 set.seed(687)
-PersonDataset_split_model2 <- initial_split(cleanPersonDataset_model2, prop = 0.80, strata = TwoMonthsWihtoutActivity)
+PersonDataset_split_model2 <- initial_split(cleanPersonDataset_model2, prop = 0.80, strata = TwoMonthsWithoutActivity)
 PersonDataset_training_model2 <- PersonDataset_split_model2 %>% training()
 PersonDataset_test_model2 <- PersonDataset_split_model2 %>% testing()
 
-dtrain <- xgb.DMatrix(data = as.matrix(PersonDataset_training_model2[1:length(PersonDataset_training_model2)-1]) ,label=PersonDataset_training_model2$TwoMonthsWihtoutActivity)
-dtest <- xgb.DMatrix(data = as.matrix(PersonDataset_test_model2[1:length(PersonDataset_test_model2)-1]), label=PersonDataset_test_model2$TwoMonthsWihtoutActivity)
+dtrain <- xgb.DMatrix(data = as.matrix(PersonDataset_training_model2[1:length(PersonDataset_training_model2)-1]) ,label=PersonDataset_training_model2$TwoMonthsWithoutActivity)
+dtest <- xgb.DMatrix(data = as.matrix(PersonDataset_test_model2[1:length(PersonDataset_test_model2)-1]), label=PersonDataset_test_model2$TwoMonthsWithoutActivity)
 
 watchlist <- list(train=dtrain, test=dtest)
 
@@ -484,12 +495,12 @@ xgb.plot.importance(importance_matrix = importance_matrix)
 #xgb.plot.tree(model = bst)
 
 set.seed(587)
-PersonDataset_split_model2 <- initial_split(cleanPersonDataset_model2, prop = 0.80, strata = TwoMonthsWihtoutActivity)
+PersonDataset_split_model2 <- initial_split(cleanPersonDataset_model2, prop = 0.80, strata = TwoMonthsWithoutActivity)
 PersonDataset_training_model2 <- PersonDataset_split_model2 %>% training()
 PersonDataset_test_model2 <- PersonDataset_split_model2 %>% testing()
 
-dtrain <- xgb.DMatrix(data = as.matrix(PersonDataset_training_model2[1:length(PersonDataset_training_model2)-1]) ,label=PersonDataset_training_model2$TwoMonthsWihtoutActivity)
-dtest <- xgb.DMatrix(data = as.matrix(PersonDataset_test_model2[1:length(PersonDataset_test_model2)-1]), label=PersonDataset_test_model2$TwoMonthsWihtoutActivity)
+dtrain <- xgb.DMatrix(data = as.matrix(PersonDataset_training_model2[1:length(PersonDataset_training_model2)-1]) ,label=PersonDataset_training_model2$TwoMonthsWithoutActivity)
+dtest <- xgb.DMatrix(data = as.matrix(PersonDataset_test_model2[1:length(PersonDataset_test_model2)-1]), label=PersonDataset_test_model2$TwoMonthsWithoutActivity)
 
 watchlist <- list(train=dtrain, test=dtest)
 
@@ -500,12 +511,12 @@ xgb.plot.importance(importance_matrix = importance_matrix)
 #xgb.plot.tree(model = bst)
 
 set.seed(487)
-PersonDataset_split_model2 <- initial_split(cleanPersonDataset_model2, prop = 0.80, strata = TwoMonthsWihtoutActivity)
+PersonDataset_split_model2 <- initial_split(cleanPersonDataset_model2, prop = 0.80, strata = TwoMonthsWithoutActivity)
 PersonDataset_training_model2 <- PersonDataset_split_model2 %>% training()
 PersonDataset_test_model2 <- PersonDataset_split_model2 %>% testing()
 
-dtrain <- xgb.DMatrix(data = as.matrix(PersonDataset_training_model2[1:length(PersonDataset_training_model2)-1]) ,label=PersonDataset_training_model2$TwoMonthsWihtoutActivity)
-dtest <- xgb.DMatrix(data = as.matrix(PersonDataset_test_model2[1:length(PersonDataset_test_model2)-1]), label=PersonDataset_test_model2$TwoMonthsWihtoutActivity)
+dtrain <- xgb.DMatrix(data = as.matrix(PersonDataset_training_model2[1:length(PersonDataset_training_model2)-1]) ,label=PersonDataset_training_model2$TwoMonthsWithoutActivity)
+dtest <- xgb.DMatrix(data = as.matrix(PersonDataset_test_model2[1:length(PersonDataset_test_model2)-1]), label=PersonDataset_test_model2$TwoMonthsWithoutActivity)
 
 watchlist <- list(train=dtrain, test=dtest)
 
@@ -516,12 +527,12 @@ xgb.plot.importance(importance_matrix = importance_matrix)
 #xgb.plot.tree(model = bst)
 
 set.seed(387)
-PersonDataset_split_model2 <- initial_split(cleanPersonDataset_model2, prop = 0.80, strata = TwoMonthsWihtoutActivity)
+PersonDataset_split_model2 <- initial_split(cleanPersonDataset_model2, prop = 0.80, strata = TwoMonthsWithoutActivity)
 PersonDataset_training_model2 <- PersonDataset_split_model2 %>% training()
 PersonDataset_test_model2 <- PersonDataset_split_model2 %>% testing()
 
-dtrain <- xgb.DMatrix(data = as.matrix(PersonDataset_training_model2[1:length(PersonDataset_training_model2)-1]) ,label=PersonDataset_training_model2$TwoMonthsWihtoutActivity)
-dtest <- xgb.DMatrix(data = as.matrix(PersonDataset_test_model2[1:length(PersonDataset_test_model2)-1]), label=PersonDataset_test_model2$TwoMonthsWihtoutActivity)
+dtrain <- xgb.DMatrix(data = as.matrix(PersonDataset_training_model2[1:length(PersonDataset_training_model2)-1]) ,label=PersonDataset_training_model2$TwoMonthsWithoutActivity)
+dtest <- xgb.DMatrix(data = as.matrix(PersonDataset_test_model2[1:length(PersonDataset_test_model2)-1]), label=PersonDataset_test_model2$TwoMonthsWithoutActivity)
 
 watchlist <- list(train=dtrain, test=dtest)
 
@@ -532,12 +543,12 @@ xgb.plot.importance(importance_matrix = importance_matrix)
 #xgb.plot.tree(model = bst)
 
 set.seed(287)
-PersonDatset_split_model2 <- initial_split(cleanPersonDataset_model2, prop = 0.80, strata = TwoMonthsWihtoutActivity)
+PersonDatset_split_model2 <- initial_split(cleanPersonDataset_model2, prop = 0.80, strata = TwoMonthsWithoutActivity)
 PersonDataset_training_model2 <- PersonDataset_split_model2 %>% training()
 PersonDataset_test_model2 <- PersonDataset_split_model2 %>% testing()
 
-dtrain <- xgb.DMatrix(data = as.matrix(PersonDataset_training_model2[1:length(PersonDataset_training_model2)-1]) ,label=PersonDataset_training_model2$TwoMonthsWihtoutActivity)
-dtest <- xgb.DMatrix(data = as.matrix(PersonDataset_test_model2[1:length(PersonDataset_test_model2)-1]), label=PersonDataset_test_model2$TwoMonthsWihtoutActivity)
+dtrain <- xgb.DMatrix(data = as.matrix(PersonDataset_training_model2[1:length(PersonDataset_training_model2)-1]) ,label=PersonDataset_training_model2$TwoMonthsWithoutActivity)
+dtest <- xgb.DMatrix(data = as.matrix(PersonDataset_test_model2[1:length(PersonDataset_test_model2)-1]), label=PersonDataset_test_model2$TwoMonthsWithoutActivity)
 
 watchlist <- list(train=dtrain, test=dtest)
 
@@ -548,12 +559,12 @@ xgb.plot.importance(importance_matrix = importance_matrix)
 #xgb.plot.tree(model = bst)
 
 set.seed(187)
-PersonDataset_split_model2 <- initial_split(cleanPersonDataset_model2, prop = 0.80, strata = TwoMonthsWihtoutActivity)
+PersonDataset_split_model2 <- initial_split(cleanPersonDataset_model2, prop = 0.80, strata = TwoMonthsWithoutActivity)
 PersonDataset_training_model2 <- PersonDataset_split_model2 %>% training()
 PersonDataset_test_model2 <- PersonDataset_split_model2 %>% testing()
 
-dtrain <- xgb.DMatrix(data = as.matrix(PersonDataset_training_model2[1:length(PersonDataset_training_model2)-1]) ,label=PersonDataset_training_model2$TwoMonthsWihtoutActivity)
-dtest <- xgb.DMatrix(data = as.matrix(PersonDataset_test_model2[1:length(PersonDataset_test_model2)-1]), label=PersonDataset_test_model2$TwoMonthsWihtoutActivity)
+dtrain <- xgb.DMatrix(data = as.matrix(PersonDataset_training_model2[1:length(PersonDataset_training_model2)-1]) ,label=PersonDataset_training_model2$TwoMonthsWithoutActivity)
+dtest <- xgb.DMatrix(data = as.matrix(PersonDataset_test_model2[1:length(PersonDataset_test_model2)-1]), label=PersonDataset_test_model2$TwoMonthsWithoutActivity)
 
 watchlist <- list(train=dtrain, test=dtest)
 
@@ -564,12 +575,12 @@ xgb.plot.importance(importance_matrix = importance_matrix)
 #xgb.plot.tree(model = bst)
 
 set.seed(87)
-PersonDataset_split_model2 <- initial_split(cleanPersonDataset_model2, prop = 0.80, strata = TwoMonthsWihtoutActivity)
+PersonDataset_split_model2 <- initial_split(cleanPersonDataset_model2, prop = 0.80, strata = TwoMonthsWithoutActivity)
 PersonDataset_training_model2 <- PersonDataset_split_model2 %>% training()
 PersonDataset_test_model2 <- PersonDataset_split_model2 %>% testing()
 
-dtrain <- xgb.DMatrix(data = as.matrix(PersonDataset_training_model2[1:length(PersonDataset_training_model2)-1]) ,label=PersonDataset_training_model2$TwoMonthsWihtoutActivity)
-dtest <- xgb.DMatrix(data = as.matrix(PersonDataset_test_model2[1:length(PersonDataset_test_model2)-1]), label=PersonDataset_test_model2$TwoMonthsWihtoutActivity)
+dtrain <- xgb.DMatrix(data = as.matrix(PersonDataset_training_model2[1:length(PersonDataset_training_model2)-1]) ,label=PersonDataset_training_model2$TwoMonthsWithoutActivity)
+dtest <- xgb.DMatrix(data = as.matrix(PersonDataset_test_model2[1:length(PersonDataset_test_model2)-1]), label=PersonDataset_test_model2$TwoMonthsWithoutActivity)
 
 watchlist <- list(train=dtrain, test=dtest)
 
