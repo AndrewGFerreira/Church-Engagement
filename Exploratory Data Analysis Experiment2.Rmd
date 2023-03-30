@@ -43,31 +43,50 @@ for (package in packages_to_install) {
 ```
 
 
-```{r Load secrets from .env file}
+```{r Load secrets from .env file and create connection with database}
 dotenv::load_dot_env()
 
 # set up the ODBC connection
+con <- dbConnect(odbc::odbc(),
+                 driver = "ODBC Driver 17 for SQL Server",
+                 server = Sys.getenv("SERVER"),
+                 database = Sys.getenv("DATABASE"),
+                 uid = Sys.getenv("UID"),
+                 pwd = Sys.getenv("PWD")
+                 )
+
 
 
 ```
 
 
 
-
-
 ```{r Importing data, include=FALSE}
+
+AccountStatsFile <- paste(getwd(), "/queries/AccountStats.sql", sep = "")
+AccoutStatsPivFile <- paste(getwd(), "/queries/AccountStatsUnpivoted.sql", sep = "")
+ExperimentFile <- paste(getwd(), "/queries/Experiment.sql", sep = "")
+
+SqlAccountStats <- readChar(AccountStatsFile, file.info(AccountStatsFile)$size)
+SqlAccoutStatsPiv <- readChar(AccoutStatsPivFile, file.info(AccoutStatsPivFile)$size)
+SqlExperimentFile <- readChar(ExperimentFile, file.info(ExperimentFile)$size)
+
+resultSqlAccountStats <- dbSendQuery(con, SqlAccountStats)
+accountsDataset <- dbFetch(resultSqlAccountStats)
+
+resultSqlAccoutStatsPiv <- dbSendQuery(con, SqlAccoutStatsPiv)
+accountsUnpivotDataset <- dbFetch(resultSqlAccoutStatsPiv)
+
+resultSqlExperimentFile <- dbSendQuery(con, SqlExperimentFile)
+personDataset <- dbFetch(resultSqlExperimentFile)
+
+
 accountsDataset <- read.csv("datasets/AccountStats4.csv", header = TRUE)
 personDataset <- read.csv("datasets/Experiment5.csv", header = TRUE)
 accountsUnpivotDataset <- read.csv("datasets/AccountStatsUnpivot.csv", header = TRUE)
 retentionDataset <- read.csv("datasets/Retention.csv", header = TRUE)
 ```
 
-```{r head datasets}
-head(accountsDataset)
-head(personDataset)
-head(accountsUnpivotDataset)
-head(retentionDataset)
-```
 
 ```{r Initial transformations, include=FALSE}
 accountsDataset$Mo <- as.Date(accountsDataset$Mo)
