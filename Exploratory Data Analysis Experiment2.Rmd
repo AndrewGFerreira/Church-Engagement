@@ -12,21 +12,48 @@ editor_options:
     wrap: 72
 ---
 
-```{r Loading libraries include=FALSE}
-library(ggplot2)
-library(dplyr)
-library(lubridate)
-library(purrr)
-library(tidyr)
-library(tidymodels)
-library(rpart)
-library(rpart.plot)
-library(tidyverse)
-library(randomForest)
-library(caret)
-library(DiagrammeR)
-library(xgboost)
+```{r include=FALSE, Loading libraries include=FALSE}
+
+packages_to_install <- c(
+  "ggplot2", 
+  "dplyr", 
+  "lubridate", 
+  "purrr", 
+  "tidyr", 
+  "tidymodels", 
+  "rpart", 
+  "rpart.plot", 
+  "tidyverse", 
+  "randomForest", 
+  "caret", 
+  "DiagrammeR", 
+  "xgboost",
+  "DBI",
+  "dotenv",
+  "odbc"
+  )
+
+
+for (package in packages_to_install) {
+  if (!require(package, character.only = TRUE)) {
+    install.packages(package)
+  }
+}
+
 ```
+
+
+```{r Load secrets from .env file}
+dotenv::load_dot_env()
+
+# set up the ODBC connection
+
+
+```
+
+
+
+
 
 ```{r Importing data, include=FALSE}
 accountsDataset <- read.csv("datasets/AccountStats4.csv", header = TRUE)
@@ -64,7 +91,7 @@ personDataset$ActivationDate <- as.Date(personDataset$ActivationDate)
 personDataset$TimeToActivate <- as.integer(personDataset$TimeToActivate)
 personDataset$IsImported <- as.factor(personDataset$IsImported)
 personDataset$PersonCreatedDate <- as.Date(personDataset$PersonCreatedDate)
-personDataset$FirstAttendanceDate <- as.Date(personDataset$FirstAttendanceDate)
+personDataset$FirstAttendance <- as.Date(personDataset$FirstAttendance)
 personDataset$DaysToFirstAttendance <- as.integer(personDataset$DaysToFirstAttendance)
 personDataset$MonthFirstAttendance <- as.factor(personDataset$MonthFirstAttendance)
 personDataset$MonthLastAttendance <- as.factor(personDataset$MonthLastAttendance)
@@ -242,7 +269,7 @@ outliersTotalCheckIns <- boxplot(personDataset$TotalCheckIns, outline = FALSE)$o
 
 # Evaluating numeric variables
 personDataset %>%
-  select(-Id, -Baptism, -CommitToChrist, -IAnNew, -PrayerRequest, -RenewCommitToChrist, -X3MonthTitheChallenge, -DaysToFirstAttendance) %>%
+  select(-Id, -Baptism, -CommitToChrist, -IAnNew, -PrayerRequest, -RenewCommitToChrist, -X3MonthsTitheChallenge, -DaysToFirstAttendance) %>%
   mutate(Age = ifelse(is.na(Age), 0, Age)) %>%
   #filter(IsImported == 0) %>%
   keep(is.numeric) %>% 
@@ -260,10 +287,12 @@ personDataset %>%
 
 
 cleanPersonDataset <- personDataset %>%
-  select(-Id, -Baptism, -CommitToChrist, -IAnNew, -PrayerRequest, -RenewCommitToChrist, -X3MonthTitheChallenge, -ActivationDate, -PersonCreatedDate, -FirstAttendance, -LastAttendance, -FirstGift, -LastGift, -MonthFirstAttendance, -MonthLastAttendance, -FirstAttendanceDate) %>%
+  select(-Id, -Baptism, -CommitToChrist, -IAnNew, -PrayerRequest, -RenewCommitToChrist, -X3MonthsTitheChallenge, -ActivationDate, -PersonCreatedDate, -FirstAttendance, -LastAttendance, -FirstGift, -LastGift, -MonthFirstAttendance, -MonthLastAttendance, -FirstAttendanceDate, -PersonType) %>%
   mutate(Age = ifelse(is.na(Age), 0, Age)) %>%
   ##filter(IsImported == 0) %>%
-  filter(TimeToActivate > 0) %>%
+  mutate(TimeToActivate = ifelse(is.na(TimeToActivate), 10000, Age)) %>%
+  #filter(TimeToActivate > 0) %>%
+  mutate(NumberOfTransactions = ifelse(is.na(NumberOfTransactions), 0, Age)) %>%
   filter(!Age %in% outliersAge) %>%
   filter(!PeopleInFamily %in% outliersPeoplInFamily) %>%
   filter(!TimeToActivate %in% outliersTimeToActivate) %>%
@@ -282,8 +311,8 @@ cleanPersonDataset <- personDataset %>%
   mutate(MaritalStatusValueId = str_replace(MaritalStatusValueId, "3471", "Unknown")) %>%
   mutate(MaritalStatusValueId = str_replace(MaritalStatusValueId, "2198", "Unknown")) %>%
   mutate(MaritalStatusValueId = as.factor(MaritalStatusValueId)) %>%
-  mutate(ServingGroups = ifelse(is.na(ServingGroups), 0, ServingGroups)) %>%
-  mutate(Volunteer = as.factor(ifelse(ServingGroups > 0, 1, 0))) %>%
+  mutate(ServingGroups = as.factor(ifelse(ifelse(is.na(ServingGroups), 0, ServingGroups) > 0, 1,0))) %>%
+  ##mutate(Volunteer = as.factor(ifelse(ServingGroups > 0, 1, 0))) %>%
   select(-ServingGroups) %>%
   mutate(Gender = str_replace(Gender, "0", "Unknown")) %>%
   mutate(Gender = str_replace(Gender, "1", "Male")) %>%
@@ -421,13 +450,13 @@ rpart.plot(dt10)
 cleanPersonDataset_model2 <- cleanPersonDataset %>%
   mutate(TwoMonthsWithoutActivity = as.character(cleanPersonDataset$TwoMonthsWithoutActivity)) %>%
   mutate(MaritalStatusValueId = as.character(cleanPersonDataset$MaritalStatusValueId)) %>%
-  filter(PersonType == 1) %>%
-  select(-PersonType, -MaritalStatusValueId) %>%
+  select(-MaritalStatusValueId) %>%
   filter(AgeClassification == 2 | AgeClassification == 1) %>%
   mutate(Gender = as.numeric(Gender)) %>%
   mutate(AgeClassification = as.numeric(AgeClassification)) %>%
   mutate(IsImported = as.numeric(IsImported)) %>%
   mutate(TwoMonthsWithoutActivity = as.numeric(ifelse(TwoMonthsWithoutActivity == "StayAtChurch", 1,0)))
+
 
 
 set.seed(987)
@@ -592,7 +621,51 @@ xgb.plot.importance(importance_matrix = importance_matrix)
 
 
 
+```
 
+
+```{r running a different xgb}
+cleanPersonDataset_model3 <- cleanPersonDataset %>%
+  mutate(TwoMonthsWithoutActivity = factor(cleanPersonDataset$TwoMonthsWithoutActivity)) %>%
+  mutate(MaritalStatusValueId = as.factor(cleanPersonDataset$MaritalStatusValueId)) %>%
+  mutate(IsImported = as.factor(IsImported)) %>%
+  mutate(IsImported = recode(IsImported, "0" = "NotImported", "1" = "Imported")) %>%
+  mutate(AgeClassification = recode(AgeClassification, "0" = "Unknown", "1" = "Adult", "2" = "Child")) %>%
+  drop_na()
+
+
+
+set.seed(987)
+PersonDataset_split_model3 <- initial_split(cleanPersonDataset_model3, prop = 0.80, strata = TwoMonthsWithoutActivity)
+PersonDataset_training_model3 <- PersonDataset_split_model3 %>% training()
+PersonDataset_test_model3 <- PersonDataset_split_model3 %>% testing()
+
+caretModel <- train(
+  TwoMonthsWithoutActivity ~ ., 
+  data = PersonDataset_training_model3, 
+  method = 'xgbTree', 
+  trControl = trainControl(
+    method = 'cv', 
+    number = 10,
+    classProbs = TRUE,
+    summaryFunction = twoClassSummary),
+    metric = 'ROC'
+  )
+
+ 
+PersonDataset_test_model2 <- PersonDataset_split_model2 %>% 
+  testing() %>%
+  select(-Gender) %>%
+  mutate(IsImported = as.factor(IsImported)) %>%
+  mutate(AgeClassification = as.factor(AgeClassification)) %>%
+  mutate(TwoMonthsWithoutActivity = as.factor(TwoMonthsWithoutActivity))
+
+levels(PersonDataset_test_model2$IsImported) <- c("Imported", "NotIMported")
+levels(PersonDataset_test_model2$AgeClassification) <- c("Adult", "Child")
+levels(PersonDataset_test_model2$TwoMonthsWithoutActivity) <- c("Stay", "Leave")
+
+
+confusionMatrix(predict(caretModel, PersonDataset_test_model2), PersonDataset_test_model2$TwoMonthsWithoutActivity)
 
 
 ```
@@ -740,7 +813,7 @@ accountsDatasetNew %>%
       )
 
 accountsDatasetNew %>%
-  filter(format(Mo,'%Y') >= "2018") %>%
+  filter(format(Mo,'%Y') >= "2018") %>%0
   group_by(Mo, Weeks) %>%
   summarise(AWA = mean(ActiveUsersWeek)) %>%
   select(Mo, AWA) %>%
@@ -760,6 +833,11 @@ accountsDatasetNew %>%
 TODO: 
   * There is room to clean up the data by removing weird number such negative age
   * The distribution is too weird
+  * Recommendation
+  * Measure impact after applying
+  * Ensure to communicate the model was trained for my church
+  * executive report AND technical report
+  
   
 ```{r}
 library(stats)
