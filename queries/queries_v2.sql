@@ -138,6 +138,9 @@ LEFT JOIN LastAttendance AS la
 WHERE la.TotalLastCheckIns <= DATEADD(MONTH, -2, GETDATE())
 ORDER BY fa.mo DESC
 
+SELECT *
+FROM #AccountStats
+
 -- Get number of people in household
 DROP TABLE IF EXISTS #PeopleInFamily
 SELECT pa.Id, COUNT(DISTINCT gm.PersonId) AS PeopleInFamily
