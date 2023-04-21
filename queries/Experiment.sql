@@ -1,7 +1,59 @@
-SET DATEFIRST 6; -- The first message starts on Saturday
-
-DROP TABLE IF EXISTS #Accounts;
-WITH NewAccountsTotal
+WITH dataset
+AS (SELECT DISTINCT
+           p.Id,
+           d.LCWeekStartDate,
+           IIF(g.CampusId = 30, 1, 0) IsLCO
+    FROM RMS.dbo.Attendance AS a
+        INNER JOIN LCDW.Dimension.Date AS d
+            ON d.FullDate = CAST(a.StartDateTime AS DATE)
+               AND a.DidAttend = 1
+        INNER JOIN RMS.dbo.PersonAlias AS pa
+            ON pa.Id = a.PersonAliasId
+        INNER JOIN RMS.dbo.Person AS p
+            ON p.Id = pa.PersonId
+        INNER JOIN RMS.dbo.AttendanceOccurrence AS ao
+            ON ao.Id = a.OccurrenceId
+        INNER JOIN RMS.dbo.[Group] AS g
+            ON g.Id = ao.GroupId),
+     calculate_consecutive_weeks
+AS (SELECT *,
+           DATEDIFF(WEEK, LAG(dataset.LCWeekStartDate) OVER (PARTITION BY Id ORDER BY LCWeekStartDate), LCWeekStartDate) AS weeksSinceLastTime
+    FROM dataset),
+     statusChange
+AS (SELECT *,
+           IIF(LAG(weeksSinceLastTime) OVER (PARTITION BY Id ORDER BY LCWeekStartDate) = weeksSinceLastTime, 0, 1) AS changeFlag
+    FROM calculate_consecutive_weeks),
+     chageTracking
+AS (SELECT *,
+           SUM(changeFlag) OVER (PARTITION BY Id ORDER BY LCWeekStartDate) AS changesTracked
+    FROM statusChange),
+     finalDataset
+AS (SELECT *,
+           ROW_NUMBER() OVER (PARTITION BY Id, changesTracked ORDER BY LCWeekStartDate) AS consecutiveWeeks
+    FROM chageTracking),
+     highestStreakSet
+AS (SELECT Id,
+           MAX(consecutiveWeeks) AS highestStreak
+    FROM finalDataset
+    GROUP BY Id),
+     highestStreakSetAtWeek
+AS (SELECT final.Id,
+           final.LCWeekStartDate,
+           final.changesTracked
+    FROM highestStreakSet AS hs
+        INNER JOIN finalDataset AS final
+            ON final.Id = hs.Id
+               AND final.consecutiveWeeks = hs.highestStreak),
+     streak
+AS (SELECT highestStreakSetAtWeek.Id,
+           MAX(consecutiveWeeks) AS highestStreak,
+           CAST(SUM(IsLCO) / CAST(COUNT(*) AS DECIMAL(19, 2)) * 100 AS DECIMAL(19, 2)) LCOPercentage
+    FROM highestStreakSetAtWeek
+        INNER JOIN finalDataset
+            ON finalDataset.Id = highestStreakSetAtWeek.Id
+               AND finalDataset.changesTracked = highestStreakSetAtWeek.changesTracked
+    GROUP BY highestStreakSetAtWeek.Id),
+     NewAccountsTotal
 AS (SELECT CAST(CONCAT(YEAR(p.CreatedDateTime), '-', MONTH(p.CreatedDateTime), '-01') AS DATE) Mo,
            COUNT(Id) AS NewAccounts
     FROM RMS.dbo.Person AS p
@@ -36,129 +88,104 @@ AS (SELECT EventMonth,
            COUNT(DISTINCT PersonEvents.PersonAliasId) ActiverUsers
     FROM PersonEvents
     GROUP BY EventMonth,
-             WeekNumber)
-SELECT ta.*,
-       pe.ActiveUsers AS ActiveUsersMonth,
-       pweek.WeekNumber,
-       pweek.ActiverUsers AS ActiveUsersWeek
-INTO #Accounts
-FROM TotalAccounts AS ta
-    LEFT JOIN PersonEventsSummary AS pe
-        ON pe.EventMonth = ta.Mo
-    LEFT JOIN PersonEventsSummaryWeekly AS pweek
-        ON pweek.EventMonth = ta.Mo
-ORDER BY ta.Mo ASC;
-
-
---Getting first and last attendance for everyone who has attendance
-DROP TABLE IF EXISTS #PersonAttendance;
-SELECT p.Id,
-       MIN(a.StartDateTime) AS FirstAttendance,
-       MAX(a.StartDateTime) AS LastAttendance,
-       COUNT(*) TotalCheckIns
-INTO #PersonAttendance
-FROM RMS.dbo.Attendance AS a
-    INNER JOIN RMS.dbo.Person AS p
-        ON RMS.dbo.ufnUtility_GetPrimaryPersonAliasId(p.Id) = a.PersonAliasId
-           AND a.DidAttend = 1
-GROUP BY p.Id;
-
---New accounts vs losing accounts
-DROP TABLE IF EXISTS #AccountStats;
-WITH FirstAttendance
+             WeekNumber),
+     Accounts
+AS (SELECT ta.*,
+           pe.ActiveUsers AS ActiveUsersMonth,
+           pweek.WeekNumber,
+           pweek.ActiverUsers AS ActiveUsersWeek
+    FROM TotalAccounts AS ta
+        LEFT JOIN PersonEventsSummary AS pe
+            ON pe.EventMonth = ta.Mo
+        LEFT JOIN PersonEventsSummaryWeekly AS pweek
+            ON pweek.EventMonth = ta.Mo),
+     PersonAttendance
+AS (SELECT p.Id,
+           MIN(a.StartDateTime) AS FirstAttendance,
+           MAX(a.StartDateTime) AS LastAttendance,
+           COUNT(*) TotalCheckIns
+    FROM RMS.dbo.Attendance AS a
+        INNER JOIN RMS.dbo.Person AS p
+            ON RMS.dbo.ufnUtility_GetPrimaryPersonAliasId(p.Id) = a.PersonAliasId
+               AND a.DidAttend = 1
+    GROUP BY p.Id),
+     FirstAttendance
 AS (SELECT CAST(CONCAT(YEAR(p.FirstAttendance), '-', MONTH(p.FirstAttendance), '-01') AS DATE) Mo,
            COUNT(*) TotalNewCheckIns
-    FROM #PersonAttendance AS p
+    FROM PersonAttendance AS p
     GROUP BY CAST(CONCAT(YEAR(p.FirstAttendance), '-', MONTH(p.FirstAttendance), '-01') AS DATE)),
      LastAttendance
 AS (SELECT CAST(CONCAT(YEAR(p.LastAttendance), '-', MONTH(p.LastAttendance), '-01') AS DATE) Mo,
            COUNT(*) TotalLastCheckIns
-    FROM #PersonAttendance AS p
-    GROUP BY CAST(CONCAT(YEAR(p.LastAttendance), '-', MONTH(p.LastAttendance), '-01') AS DATE))
-SELECT acc.Mo,
-       acc.NewAccounts,
-       acc.TotalAccounts,
-       fa.TotalNewCheckIns,
-       la.TotalLastCheckIns,
-       acc.ActiveUsersMonth,
-       acc.WeekNumber,
-       acc.ActiveUsersWeek
-INTO #AccountStats
-FROM #Accounts AS acc
-    LEFT JOIN FirstAttendance AS fa
-        ON fa.Mo = acc.Mo
-    LEFT JOIN LastAttendance AS la
-        ON la.Mo = acc.Mo
-WHERE la.TotalLastCheckIns <= DATEADD(MONTH, -2, GETDATE())
-ORDER BY fa.Mo DESC;
-
-
--- Get number of people in household
-DROP TABLE IF EXISTS #PeopleInFamily;
-SELECT pa.Id,
-       COUNT(DISTINCT gm.PersonId) AS PeopleInFamily
-INTO #PeopleInFamily
-FROM #PersonAttendance AS pa
-    INNER JOIN RMS.dbo.Person AS p
-        ON p.Id = pa.Id
-    INNER JOIN RMS.dbo.[Group] AS g
-        ON g.Id = p.PrimaryFamilyId
-    INNER JOIN RMS.dbo.GroupMember AS gm
-        ON gm.GroupId = g.Id
-GROUP BY pa.Id;
-
--- get giving information
-DROP TABLE IF EXISTS #PersonGiving;
-SELECT pa.Id,
-       COUNT(ft.Id) AS NumberOfTransactions,
-       MIN(ft.CreatedDateTime) AS FirstGift,
-       MAX(ft.CreatedDateTime) AS LastGift
-INTO #PersonGiving
-FROM #PersonAttendance AS pa
-    INNER JOIN RMS.dbo.FinancialTransaction AS ft
-        ON ft.AuthorizedPersonAliasId = RMS.dbo.ufnUtility_GetPrimaryPersonAliasId(pa.Id)
-GROUP BY pa.Id;
-
---getting the list of serving group that each person is in
-DROP TABLE IF EXISTS #ServingGroupCount;
-SELECT pa.Id,
-       COUNT(DISTINCT g.Id) AS ServingGroups
-INTO #ServingGroupCount
-FROM #PersonAttendance AS pa
-    INNER JOIN RMS.dbo.GroupMember AS gm
-        ON gm.PersonId = pa.Id
-    INNER JOIN RMS.dbo.[Group] AS g
-        ON g.Id = gm.GroupId
-    INNER JOIN RMS.dbo.GroupType AS gt
-        ON gt.Id = g.GroupTypeId
-           AND gt.GroupTypePurposeValueId = 184 --serving
-GROUP BY pa.Id;
-
--- get count of small groups
-DROP TABLE IF EXISTS #SmallGroupCount;
-SELECT pa.Id,
-       COUNT(DISTINCT g.Id) SmallGroupCount
-INTO #SmallGroupCount
-FROM #PersonAttendance AS pa
-    INNER JOIN RMS.dbo.GroupMember AS gm
-        ON gm.PersonId = pa.Id
-    INNER JOIN RMS.dbo.[Group] AS g
-        ON g.Id = gm.GroupId
-    INNER JOIN RMS.dbo.GroupType AS gt
-        ON gt.Id = g.GroupTypeId
-           AND gt.GroupTypePurposeValueId = 157176 -- Small Group
-GROUP BY pa.Id;
-
---get list of main next steps taken
-DROP TABLE IF EXISTS #NextStepsTaken;
-WITH nextstepsCTE
+    FROM PersonAttendance AS p
+    GROUP BY CAST(CONCAT(YEAR(p.LastAttendance), '-', MONTH(p.LastAttendance), '-01') AS DATE)),
+     AccountStats
+AS (SELECT acc.Mo,
+           acc.NewAccounts,
+           acc.TotalAccounts,
+           fa.TotalNewCheckIns,
+           la.TotalLastCheckIns,
+           acc.ActiveUsersMonth,
+           acc.WeekNumber,
+           acc.ActiveUsersWeek
+    FROM Accounts AS acc
+        LEFT JOIN FirstAttendance AS fa
+            ON fa.Mo = acc.Mo
+        LEFT JOIN LastAttendance AS la
+            ON la.Mo = acc.Mo
+    WHERE la.TotalLastCheckIns <= DATEADD(MONTH, -2, GETDATE())),
+     PeopleInFamily
+AS (SELECT pa.Id,
+           COUNT(DISTINCT gm.PersonId) AS PeopleInFamily
+    FROM PersonAttendance AS pa
+        INNER JOIN RMS.dbo.Person AS p
+            ON p.Id = pa.Id
+        INNER JOIN RMS.dbo.[Group] AS g
+            ON g.Id = p.PrimaryFamilyId
+        INNER JOIN RMS.dbo.GroupMember AS gm
+            ON gm.GroupId = g.Id
+    GROUP BY pa.Id),
+     PersonGiving
+AS (SELECT pa.Id,
+           COUNT(ft.Id) AS NumberOfTransactions,
+           MIN(ft.CreatedDateTime) AS FirstGift,
+           MAX(ft.CreatedDateTime) AS LastGift
+    FROM PersonAttendance AS pa
+        INNER JOIN RMS.dbo.FinancialTransaction AS ft
+            ON ft.AuthorizedPersonAliasId = RMS.dbo.ufnUtility_GetPrimaryPersonAliasId(pa.Id)
+    GROUP BY pa.Id),
+     ServingGroupCount
+AS (SELECT pa.Id,
+           COUNT(DISTINCT g.Id) AS ServingGroups
+    FROM PersonAttendance AS pa
+        INNER JOIN RMS.dbo.GroupMember AS gm
+            ON gm.PersonId = pa.Id
+        INNER JOIN RMS.dbo.[Group] AS g
+            ON g.Id = gm.GroupId
+        INNER JOIN RMS.dbo.GroupType AS gt
+            ON gt.Id = g.GroupTypeId
+               AND gt.GroupTypePurposeValueId = 184 --serving
+    GROUP BY pa.Id),
+     SmallGroupCount
+AS (SELECT pa.Id,
+           COUNT(DISTINCT g.Id) SmallGroupCount
+    FROM PersonAttendance AS pa
+        INNER JOIN RMS.dbo.GroupMember AS gm
+            ON gm.PersonId = pa.Id
+        INNER JOIN RMS.dbo.[Group] AS g
+            ON g.Id = gm.GroupId
+        INNER JOIN RMS.dbo.GroupType AS gt
+            ON gt.Id = g.GroupTypeId
+               AND gt.GroupTypePurposeValueId = 157176 -- Small Group
+    GROUP BY pa.Id),
+     nextstepsCTE
 AS (SELECT pAttendance.Id,
            co.Id AS ConnectionOpportunity,
            COUNT(cr.Id) NextStepCount
     FROM RMS.dbo.ConnectionRequest AS cr
         INNER JOIN RMS.dbo.PersonAlias AS pa
             ON pa.Id = cr.PersonAliasId
-        INNER JOIN #PersonAttendance AS pAttendance
+        INNER JOIN PersonAttendance AS pAttendance
             ON pAttendance.Id = pa.PersonId
         INNER JOIN RMS.dbo.ConnectionOpportunity AS co
             ON co.Id = cr.ConnectionOpportunityId
@@ -171,49 +198,43 @@ AS (SELECT pAttendance.Id,
                                 7   --Baptism Sign Up
                             )
     GROUP BY pAttendance.Id,
-             co.Id)
-SELECT *
-INTO #NextStepsTaken
-FROM nextstepsCTE
-    PIVOT
-    (
-        MAX(NextStepCount)
-        FOR ConnectionOpportunity IN (   [4],  --3 Month Tithe Challenge
-                                         [11], --Commit to Christ
-                                         [13], --I'm New
-                                         [24], --Prayer Request
-                                         [25], --Renewing Commitment to Christ
-                                         [26], --Serving Interest
-                                         [7]   --Baptism Sign Up
-                                     )
-    ) AS final;
-
---activation event
-DROP TABLE IF EXISTS #PersonActivation;
-SELECT p.Id,
-       p.CreatedDateTime,
-       pa.FirstAttendance,
-       pg.FirstGift,
-       CASE
-           WHEN pa.FirstAttendance < pg.FirstGift THEN
-               pa.FirstAttendance
-           WHEN pg.FirstGift < pa.FirstAttendance THEN
-               pg.FirstGift
-           WHEN pg.FirstGift = pa.FirstAttendance THEN
-               pa.FirstAttendance
-           ELSE
-               NULL
-       END AS ActivationDate
-INTO #PersonActivation
-FROM RMS.dbo.Person AS p
-    LEFT JOIN #PersonAttendance AS pa
-        ON pa.Id = p.Id
-    LEFT JOIN #PersonGiving AS pg
-        ON pg.Id = p.Id;
-
-
---Get final dataset
-DROP TABLE IF EXISTS Experiment;
+             co.Id),
+     NextStepsTaken
+AS (SELECT *
+    FROM nextstepsCTE
+        PIVOT
+        (
+            MAX(NextStepCount)
+            FOR ConnectionOpportunity IN (   [4],  --3 Month Tithe Challenge
+                                             [11], --Commit to Christ
+                                             [13], --I'm New
+                                             [24], --Prayer Request
+                                             [25], --Renewing Commitment to Christ
+                                             [26], --Serving Interest
+                                             [7]   --Baptism Sign Up
+                                         )
+        ) AS final),
+     --activation event
+     PersonActivation
+AS (SELECT p.Id,
+           p.CreatedDateTime,
+           pa.FirstAttendance,
+           pg.FirstGift,
+           CASE
+               WHEN pa.FirstAttendance < pg.FirstGift THEN
+                   pa.FirstAttendance
+               WHEN pg.FirstGift < pa.FirstAttendance THEN
+                   pg.FirstGift
+               WHEN pg.FirstGift = pa.FirstAttendance THEN
+                   pa.FirstAttendance
+               ELSE
+                   NULL
+           END AS ActivationDate
+    FROM RMS.dbo.Person AS p
+        LEFT JOIN PersonAttendance AS pa
+            ON pa.Id = p.Id
+        LEFT JOIN PersonGiving AS pg
+            ON pg.Id = p.Id)
 SELECT pa.Id,
        p.RecordTypeValueId AS PersonType,
        ISNULL(pa.TotalCheckIns, 0) AS TotalCheckIns,
@@ -248,21 +269,19 @@ SELECT pa.Id,
        ISNULL(st.highestStreak, 0) AS highestStreak,
        ISNULL(st.LCOPercentage, 0) AS LCOPercentage,
        IIF(DATEDIFF(MONTH, pa.LastAttendance, GETDATE()) > 2, 1, 0) AS TwoMonthsWithoutActivity
-INTO Experiment
-FROM #PersonAttendance AS pa
+FROM PersonAttendance AS pa
     INNER JOIN RMS.dbo.Person AS p
         ON p.Id = pa.Id
-    LEFT JOIN #PeopleInFamily AS pf
+    LEFT JOIN PeopleInFamily AS pf
         ON pa.Id = pf.Id
-    LEFT JOIN #PersonGiving AS pg
+    LEFT JOIN PersonGiving AS pg
         ON pa.Id = pg.Id
-    LEFT JOIN #ServingGroupCount AS sg
+    LEFT JOIN ServingGroupCount AS sg
         ON sg.Id = p.Id
-    LEFT JOIN #NextStepsTaken AS ns
+    LEFT JOIN NextStepsTaken AS ns
         ON ns.Id = p.Id
-    LEFT JOIN #PersonActivation AS pactivation
-        ON pactivation.Id = pa.Id;
+    LEFT JOIN PersonActivation AS pactivation
+        ON pactivation.Id = pa.Id
+    LEFT JOIN streak AS st
+        ON st.Id = p.Id;
 
-
-SELECT *
-FROM Experiment;

@@ -1,7 +1,3 @@
-SET DATEFIRST 6; -- The first message starts on Saturday
-
--- get streak
-DROP TABLE IF EXISTS #streak;
 WITH dataset
 AS (SELECT DISTINCT
            p.Id,
@@ -47,20 +43,17 @@ AS (SELECT final.Id,
     FROM highestStreakSet AS hs
         INNER JOIN finalDataset AS final
             ON final.Id = hs.Id
-               AND final.consecutiveWeeks = hs.highestStreak)
-SELECT highestStreakSetAtWeek.Id,
-       MAX(consecutiveWeeks) AS highestStreak,
-       CAST(SUM(IsLCO) / CAST(COUNT(*) AS DECIMAL(19, 2)) * 100 AS DECIMAL(19, 2)) LCOPercentage
-INTO #streak
-FROM highestStreakSetAtWeek
-    INNER JOIN finalDataset
-        ON finalDataset.Id = highestStreakSetAtWeek.Id
-           AND finalDataset.changesTracked = highestStreakSetAtWeek.changesTracked
-GROUP BY highestStreakSetAtWeek.Id;
-
-
-DROP TABLE IF EXISTS #Accounts;
-WITH NewAccountsTotal
+               AND final.consecutiveWeeks = hs.highestStreak),
+     streak
+AS (SELECT highestStreakSetAtWeek.Id,
+           MAX(consecutiveWeeks) AS highestStreak,
+           CAST(SUM(IsLCO) / CAST(COUNT(*) AS DECIMAL(19, 2)) * 100 AS DECIMAL(19, 2)) LCOPercentage
+    FROM highestStreakSetAtWeek
+        INNER JOIN finalDataset
+            ON finalDataset.Id = highestStreakSetAtWeek.Id
+               AND finalDataset.changesTracked = highestStreakSetAtWeek.changesTracked
+    GROUP BY highestStreakSetAtWeek.Id),
+     NewAccountsTotal
 AS (SELECT CAST(CONCAT(YEAR(p.CreatedDateTime), '-', MONTH(p.CreatedDateTime), '-01') AS DATE) Mo,
            COUNT(Id) AS NewAccounts
     FROM RMS.dbo.Person AS p
@@ -95,64 +88,54 @@ AS (SELECT EventMonth,
            COUNT(DISTINCT PersonEvents.PersonAliasId) ActiverUsers
     FROM PersonEvents
     GROUP BY EventMonth,
-             WeekNumber)
-SELECT ta.*,
-       pe.ActiveUsers AS ActiveUsersMonth,
-       pweek.WeekNumber,
-       pweek.ActiverUsers AS ActiveUsersWeek
-INTO #Accounts
-FROM TotalAccounts AS ta
-    LEFT JOIN PersonEventsSummary AS pe
-        ON pe.EventMonth = ta.Mo
-    LEFT JOIN PersonEventsSummaryWeekly AS pweek
-        ON pweek.EventMonth = ta.Mo
-ORDER BY ta.Mo ASC;
-
-
---Getting first and last attendance for everyone who has attendance
-DROP TABLE IF EXISTS #PersonAttendance;
-SELECT p.Id,
-       MIN(a.StartDateTime) AS FirstAttendance,
-       MAX(a.StartDateTime) AS LastAttendance,
-       COUNT(*) TotalCheckIns
-INTO #PersonAttendance
-FROM RMS.dbo.Attendance AS a
-    INNER JOIN RMS.dbo.Person AS p
-        ON RMS.dbo.ufnUtility_GetPrimaryPersonAliasId(p.Id) = a.PersonAliasId
-           AND a.DidAttend = 1
-GROUP BY p.Id;
-
---New accounts vs losing accounts
-DROP TABLE IF EXISTS #AccountStats;
-WITH FirstAttendance
+             WeekNumber),
+     Accounts
+AS (SELECT ta.*,
+           pe.ActiveUsers AS ActiveUsersMonth,
+           pweek.WeekNumber,
+           pweek.ActiverUsers AS ActiveUsersWeek
+    FROM TotalAccounts AS ta
+        LEFT JOIN PersonEventsSummary AS pe
+            ON pe.EventMonth = ta.Mo
+        LEFT JOIN PersonEventsSummaryWeekly AS pweek
+            ON pweek.EventMonth = ta.Mo),
+     PersonAttendance
+AS (SELECT p.Id,
+           MIN(a.StartDateTime) AS FirstAttendance,
+           MAX(a.StartDateTime) AS LastAttendance,
+           COUNT(*) TotalCheckIns
+    FROM RMS.dbo.Attendance AS a
+        INNER JOIN RMS.dbo.Person AS p
+            ON RMS.dbo.ufnUtility_GetPrimaryPersonAliasId(p.Id) = a.PersonAliasId
+               AND a.DidAttend = 1
+    GROUP BY p.Id),
+     FirstAttendance
 AS (SELECT CAST(CONCAT(YEAR(p.FirstAttendance), '-', MONTH(p.FirstAttendance), '-01') AS DATE) Mo,
            COUNT(*) TotalNewCheckIns
-    FROM #PersonAttendance AS p
+    FROM PersonAttendance AS p
     GROUP BY CAST(CONCAT(YEAR(p.FirstAttendance), '-', MONTH(p.FirstAttendance), '-01') AS DATE)),
      LastAttendance
 AS (SELECT CAST(CONCAT(YEAR(p.LastAttendance), '-', MONTH(p.LastAttendance), '-01') AS DATE) Mo,
            COUNT(*) TotalLastCheckIns
-    FROM #PersonAttendance AS p
-    GROUP BY CAST(CONCAT(YEAR(p.LastAttendance), '-', MONTH(p.LastAttendance), '-01') AS DATE))
-SELECT acc.Mo,
-       acc.NewAccounts,
-       acc.TotalAccounts,
-       fa.TotalNewCheckIns,
-       la.TotalLastCheckIns,
-       acc.ActiveUsersMonth,
-       acc.WeekNumber,
-       acc.ActiveUsersWeek
-INTO #AccountStats
-FROM #Accounts AS acc
-    LEFT JOIN FirstAttendance AS fa
-        ON fa.Mo = acc.Mo
-    LEFT JOIN LastAttendance AS la
-        ON la.Mo = acc.Mo
-WHERE la.TotalLastCheckIns <= DATEADD(MONTH, -2, GETDATE())
-ORDER BY fa.Mo DESC;
-
+    FROM PersonAttendance AS p
+    GROUP BY CAST(CONCAT(YEAR(p.LastAttendance), '-', MONTH(p.LastAttendance), '-01') AS DATE)),
+     AccountStats
+AS (SELECT acc.Mo,
+           acc.NewAccounts,
+           acc.TotalAccounts,
+           fa.TotalNewCheckIns,
+           la.TotalLastCheckIns,
+           acc.ActiveUsersMonth,
+           acc.WeekNumber,
+           acc.ActiveUsersWeek
+    FROM Accounts AS acc
+        LEFT JOIN FirstAttendance AS fa
+            ON fa.Mo = acc.Mo
+        LEFT JOIN LastAttendance AS la
+            ON la.Mo = acc.Mo
+    WHERE la.TotalLastCheckIns <= DATEADD(MONTH, -2, GETDATE()))
 SELECT piv.*
-FROM #AccountStats
+FROM AccountStats
     UNPIVOT
     (
         Numnber
